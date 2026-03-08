@@ -81,6 +81,7 @@
     currentTrackRequest: null,
     currentTrackRequestKey: "",
     currentResolvedTargetPostNumber: null,
+    currentLatestRepliesTopic: null,
     currentFallbackTitle: "",
     currentTopic: null,
     abortController: null,
@@ -147,9 +148,9 @@
               <span class="ld-setting-label">回复排序</span>
               <select class="ld-setting-control" data-setting="replyOrder">
                 <option value="default">默认顺序</option>
-                <option value="latestFirst">最新回复优先</option>
+                <option value="latestFirst">首帖 + 最新回复</option>
               </select>
-              <span class="ld-setting-hint">启用后会保留首帖在顶部，后续回复按从新到旧显示</span>
+              <span class="ld-setting-hint">长帖下会优先显示最新一批回复，不代表把整帖一次性完整倒序</span>
             </label>
             <label class="ld-setting-field">
               <span class="ld-setting-label">抽屉宽度</span>
@@ -341,7 +342,6 @@
       state.currentTrackRequestKey = "";
     }
     state.currentTopicTrackingKey = nextTrackingKey;
-    state.currentResolvedTargetPostNumber = null;
 
     if (state.currentUrl === topicUrl && document.body.classList.contains(PAGE_OPEN_CLASS)) {
       highlightLink(activeLink);
@@ -356,7 +356,9 @@
 
     state.currentUrl = topicUrl;
     state.currentFallbackTitle = fallbackTitle || "";
+    state.currentResolvedTargetPostNumber = null;
     state.currentTopic = null;
+    state.currentLatestRepliesTopic = null;
     state.title.textContent = fallbackTitle || "加载中…";
     state.meta.textContent = "正在载入帖子内容…";
     state.openInTab.href = topicUrl;
@@ -391,6 +393,7 @@
     state.currentTrackRequest = null;
     state.currentTrackRequestKey = "";
     state.currentResolvedTargetPostNumber = null;
+    state.currentLatestRepliesTopic = null;
     state.currentFallbackTitle = "";
     state.currentTopic = null;
     state.meta.textContent = "";
@@ -525,6 +528,8 @@
       const targetSpec = getTopicTargetSpec(topicUrl, topicIdHint);
       let resolvedTargetPostNumber = null;
       let topic;
+      let targetedTopic = null;
+      let latestRepliesTopic = null;
 
       if (state.currentViewTracked) {
         topic = await fetchTrackedTopicJson(topicUrl, controller.signal, topicIdHint, {
@@ -536,7 +541,7 @@
       }
 
       if (shouldFetchTargetedTopic(topic, targetSpec)) {
-        const targetedTopic = await fetchTrackedTopicJson(topicUrl, controller.signal, topicIdHint, {
+        targetedTopic = await fetchTrackedTopicJson(topicUrl, controller.signal, topicIdHint, {
           canonical: false,
           trackVisit: false
         });
@@ -546,11 +551,29 @@
         resolvedTargetPostNumber = resolveTopicTargetPostNumber(targetSpec, topic, null);
       }
 
+      if (shouldLoadLatestRepliesTopic(topic, targetSpec)) {
+        if (targetSpec?.targetToken === "last" && targetedTopic) {
+          latestRepliesTopic = targetedTopic;
+        } else {
+          try {
+            latestRepliesTopic = await fetchLatestRepliesTopic(topicUrl, controller.signal, topicIdHint);
+          } catch (error) {
+            if (controller.signal.aborted) {
+              throw error;
+            }
+            latestRepliesTopic = null;
+          }
+        }
+      }
+
       if (controller.signal.aborted || state.currentUrl !== topicUrl) {
         return;
       }
 
-      renderTopic(topic, topicUrl, fallbackTitle, resolvedTargetPostNumber);
+      renderTopic(topic, topicUrl, fallbackTitle, resolvedTargetPostNumber, {
+        latestRepliesTopic,
+        targetSpec
+      });
     } catch (error) {
       if (controller.signal.aborted) {
         return;
@@ -564,7 +587,7 @@
     }
   }
 
-  function renderTopic(topic, topicUrl, fallbackTitle, resolvedTargetPostNumber = null) {
+  function renderTopic(topic, topicUrl, fallbackTitle, resolvedTargetPostNumber = null, options = {}) {
     setIframeModeEnabled(false);
 
     const posts = topic?.post_stream?.posts || [];
@@ -574,20 +597,26 @@
       return;
     }
 
+    const targetSpec = options.targetSpec || getTopicTargetSpec(topicUrl, state.currentTopicIdHint);
+    const latestRepliesTopic = options.latestRepliesTopic || null;
+    const viewModel = buildTopicViewModel(topic, latestRepliesTopic, targetSpec);
+
     state.currentTopic = topic;
+    state.currentLatestRepliesTopic = latestRepliesTopic;
     state.currentTopicIdHint = typeof topic?.id === "number" ? topic.id : state.currentTopicIdHint;
     state.currentResolvedTargetPostNumber = resolvedTargetPostNumber;
     state.title.textContent = topic.title || fallbackTitle || "帖子预览";
-    state.meta.textContent = buildTopicMeta(topic, posts.length);
-    state.content.replaceChildren(buildTopicView(topic, posts));
+    state.meta.textContent = buildTopicMeta(topic, viewModel.posts.length);
+    state.content.replaceChildren(buildTopicView(topic, viewModel));
     scrollTopicViewToTargetPost(resolvedTargetPostNumber);
   }
 
-  function buildTopicView(topic, posts) {
+  function buildTopicView(topic, viewModel) {
     const wrapper = document.createElement("div");
     wrapper.className = "ld-topic-view";
 
-    const visiblePosts = getVisiblePosts(posts);
+    const visiblePosts = viewModel.posts;
+    const basePosts = topic?.post_stream?.posts || [];
 
     if (!state.hasShownPreviewNotice) {
       const notice = document.createElement("div");
@@ -622,18 +651,19 @@
       wrapper.appendChild(buildPostCard(post));
     }
 
-    const totalPosts = topic?.posts_count || posts.length;
-    if (state.settings.postMode === "first" && posts.length > 1) {
+    const totalPosts = topic?.posts_count || basePosts.length;
+    if (state.settings.postMode === "first" && basePosts.length > 1) {
       const note = document.createElement("div");
       note.className = "ld-topic-note";
       note.textContent = `当前为“仅首帖”模式。想看回复，可在右上角选项里切回“完整主题”。`;
       wrapper.appendChild(note);
     }
 
-    if (state.settings.postMode !== "first" && state.settings.replyOrder === "latestFirst" && posts.length > 1) {
+    const replyModeNote = buildReplyModeNote(viewModel);
+    if (replyModeNote) {
       const note = document.createElement("div");
       note.className = "ld-topic-note";
-      note.textContent = `当前为“最新回复优先”模式。首帖保留在顶部，后续回复按从新到旧显示。`;
+      note.textContent = replyModeNote;
       wrapper.appendChild(note);
     }
 
@@ -647,16 +677,100 @@
     return wrapper;
   }
 
-  function getVisiblePosts(posts) {
+  function buildTopicViewModel(topic, latestRepliesTopic = null, targetSpec = null) {
+    const posts = topic?.post_stream?.posts || [];
+
     if (state.settings.postMode === "first") {
-      return posts.slice(0, 1);
+      return {
+        posts: posts.slice(0, 1),
+        mode: "first"
+      };
     }
 
-    if (state.settings.replyOrder === "latestFirst" && posts.length > 1) {
-      return [posts[0], ...posts.slice(1).reverse()];
+    if (targetSpec?.targetPostNumber) {
+      return {
+        posts,
+        mode: "targeted"
+      };
     }
 
-    return posts;
+    if (state.settings.replyOrder !== "latestFirst" || posts.length <= 1) {
+      return {
+        posts,
+        mode: "default"
+      };
+    }
+
+    if (topicHasCompletePostStream(topic)) {
+      return {
+        posts: [posts[0], ...posts.slice(1).reverse()],
+        mode: "latestComplete"
+      };
+    }
+
+    if (latestRepliesTopic) {
+      return {
+        posts: getLatestRepliesDisplayPosts(topic, latestRepliesTopic),
+        mode: "latestWindow"
+      };
+    }
+
+    return {
+      posts,
+      mode: "latestUnavailable"
+    };
+  }
+
+  function getLatestRepliesDisplayPosts(topic, latestRepliesTopic) {
+    const firstPost = getFirstTopicPost(topic) || getFirstTopicPost(latestRepliesTopic);
+    const replies = [];
+    const seenPostNumbers = new Set();
+
+    for (const post of latestRepliesTopic?.post_stream?.posts || []) {
+      if (typeof post?.post_number !== "number") {
+        continue;
+      }
+
+      if (firstPost && post.post_number === firstPost.post_number) {
+        continue;
+      }
+
+      if (seenPostNumbers.has(post.post_number)) {
+        continue;
+      }
+
+      seenPostNumbers.add(post.post_number);
+      replies.push(post);
+    }
+
+    replies.sort((left, right) => right.post_number - left.post_number);
+
+    if (!firstPost) {
+      return replies;
+    }
+
+    return [firstPost, ...replies];
+  }
+
+  function getFirstTopicPost(topic) {
+    const posts = topic?.post_stream?.posts || [];
+    return posts.find((post) => post?.post_number === 1) || posts[0] || null;
+  }
+
+  function buildReplyModeNote(viewModel) {
+    if (viewModel.mode === "latestComplete") {
+      return "当前为“首帖 + 最新回复”模式。首帖固定在顶部，其余回复按从新到旧显示。";
+    }
+
+    if (viewModel.mode === "latestWindow") {
+      return "当前为“首帖 + 最新回复”模式。首帖固定在顶部，下面显示的是最新一批回复；长帖不会一次性把整帖完整倒序。";
+    }
+
+    if (viewModel.mode === "latestUnavailable") {
+      return "当前已切到“首帖 + 最新回复”模式，但这次没拿到最新回复窗口，暂按当前顺序显示。";
+    }
+
+    return "";
   }
 
   function getTagLabel(tag) {
@@ -819,6 +933,26 @@
     return request;
   }
 
+  function getLatestRepliesTopicUrl(topicUrl, topicIdHint = null) {
+    const url = new URL(topicUrl);
+    const parsed = parseTopicPath(url.pathname, topicIdHint);
+
+    url.hash = "";
+    url.search = "";
+    url.pathname = parsed?.topicPath
+      ? `${parsed.topicPath}/last`
+      : `${stripTrailingSlash(url.pathname)}/last`;
+
+    return url.toString().replace(/\/$/, "");
+  }
+
+  async function fetchLatestRepliesTopic(topicUrl, signal, topicIdHint = null) {
+    return fetchTrackedTopicJson(getLatestRepliesTopicUrl(topicUrl, topicIdHint), signal, topicIdHint, {
+      canonical: false,
+      trackVisit: false
+    });
+  }
+
   function buildTopicRequestHeaders(topicId) {
     const headers = {
       Accept: "application/json"
@@ -872,6 +1006,22 @@
     }
 
     return true;
+  }
+
+  function shouldLoadLatestRepliesTopic(topic, targetSpec) {
+    if (state.settings.postMode === "first" || state.settings.replyOrder !== "latestFirst") {
+      return false;
+    }
+
+    if (targetSpec?.targetPostNumber) {
+      return false;
+    }
+
+    if (targetSpec?.hasTarget && targetSpec.targetToken && targetSpec.targetToken !== "last") {
+      return false;
+    }
+
+    return !topicHasCompletePostStream(topic);
   }
 
   function topicHasCompletePostStream(topic) {
@@ -1289,11 +1439,16 @@
 
     if (state.currentTopic) {
       const targetSpec = getTopicTargetSpec(state.currentUrl, state.currentTopicIdHint);
-      const needsReload = shouldFetchTargetedTopic(state.currentTopic, targetSpec)
+      const needsTargetReload = shouldFetchTargetedTopic(state.currentTopic, targetSpec)
         && !state.currentResolvedTargetPostNumber;
+      const needsLatestRepliesReload = shouldLoadLatestRepliesTopic(state.currentTopic, targetSpec)
+        && !state.currentLatestRepliesTopic;
 
-      if (!needsReload) {
-        renderTopic(state.currentTopic, state.currentUrl, state.currentFallbackTitle, state.currentResolvedTargetPostNumber);
+      if (!needsTargetReload && !needsLatestRepliesReload) {
+        renderTopic(state.currentTopic, state.currentUrl, state.currentFallbackTitle, state.currentResolvedTargetPostNumber, {
+          latestRepliesTopic: state.currentLatestRepliesTopic,
+          targetSpec
+        });
         return;
       }
     }
