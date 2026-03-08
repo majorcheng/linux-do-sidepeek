@@ -72,11 +72,11 @@ body.ld-drawer-page-open #ld-drawer-root {
   position: sticky;
   top: 0;
   z-index: 2;
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  justify-content: space-between;
-  padding: 16px 18px 14px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 14px 18px 12px;
   background: color-mix(in srgb, var(--secondary, #fff) 92%, transparent);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--primary-low, rgba(15, 23, 42, 0.08));
@@ -84,8 +84,9 @@ body.ld-drawer-page-open #ld-drawer-root {
 
 #ld-drawer-root .ld-drawer-title-group {
   min-width: 0;
+  width: 100%;
   display: grid;
-  gap: 6px;
+  gap: 4px;
 }
 
 #ld-drawer-root .ld-drawer-eyebrow {
@@ -97,25 +98,46 @@ body.ld-drawer-page-open #ld-drawer-root {
 
 #ld-drawer-root .ld-drawer-title {
   margin: 0;
+  min-width: 0;
   font-size: 20px;
-  line-height: 1.35;
+  line-height: 1.25;
   font-weight: 700;
-  word-break: break-word;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#ld-drawer-root .ld-drawer-toolbar {
+  display: grid;
+  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px 12px;
+  min-width: 0;
 }
 
 #ld-drawer-root .ld-drawer-meta {
+  min-width: 0;
+  max-width: 100%;
   color: var(--primary-medium, rgba(15, 23, 42, 0.64));
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#ld-drawer-root .ld-drawer-meta:empty {
+  display: none;
 }
 
 #ld-drawer-root .ld-drawer-actions {
   display: flex;
+  min-width: 0;
   align-items: center;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 10px;
-  flex-shrink: 0;
+  gap: 8px;
 }
 
 #ld-drawer-root .ld-drawer-nav,
@@ -128,8 +150,8 @@ body.ld-drawer-page-open #ld-drawer-root {
   background: var(--secondary, #fff);
   color: inherit;
   border-radius: 999px;
-  padding: 8px 12px;
-  font-size: 13px;
+  padding: 7px 11px;
+  font-size: 12px;
   line-height: 1;
   cursor: pointer;
   text-decoration: none;
@@ -470,12 +492,24 @@ body.ld-drawer-page-open #ld-drawer-root {
   }
 
   #ld-drawer-root .ld-drawer-header {
-    flex-direction: column;
+    gap: 8px;
+  }
+
+  #ld-drawer-root .ld-drawer-title {
+    font-size: 18px;
+  }
+
+  #ld-drawer-root .ld-drawer-toolbar {
+    gap: 8px;
+  }
+
+  #ld-drawer-root .ld-drawer-meta {
+    font-size: 12px;
   }
 
   #ld-drawer-root .ld-drawer-actions {
-    width: 100%;
-    justify-content: flex-end;
+    justify-content: flex-start;
+    gap: 6px;
   }
 
   #ld-drawer-root .ld-drawer-settings {

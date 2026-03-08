@@ -23,10 +23,38 @@
     ".latest-topic-list-item",
     "tbody.topic-list-body tr"
   ].join(", ");
-  const LINK_SELECTOR = [
+  const PRIMARY_TOPIC_LINK_SELECTOR = [
     "a.title",
     ".main-link a.raw-topic-link",
-    ".main-link a.title"
+    ".main-link a.title",
+    ".search-link",
+    ".search-result-topic a",
+    ".user-stream .title a",
+    ".user-main .item .title a"
+  ].join(", ");
+  const ENTRY_CONTAINER_SELECTOR = [
+    LIST_ROW_SELECTOR,
+    ".search-result",
+    ".fps-result",
+    ".user-stream .item",
+    ".user-main .item"
+  ].join(", ");
+  const MAIN_CONTENT_SELECTOR = "#main-outlet";
+  const EXCLUDED_LINK_CONTEXT_SELECTOR = [
+    ".cooked",
+    ".topic-post",
+    ".topic-body",
+    ".topic-map",
+    ".timeline-container",
+    "#reply-control",
+    ".d-editor-container",
+    ".composer-popup",
+    ".select-kit",
+    ".modal",
+    ".menu-panel",
+    ".popup-menu",
+    ".user-card",
+    ".group-card"
   ].join(", ");
 
   const state = {
@@ -45,6 +73,14 @@
     resizeHandle: null,
     activeLink: null,
     currentUrl: "",
+    currentEntryElement: null,
+    currentEntryKey: "",
+    currentTopicIdHint: null,
+    currentTopicTrackingKey: "",
+    currentViewTracked: false,
+    currentTrackRequest: null,
+    currentTrackRequestKey: "",
+    currentResolvedTargetPostNumber: null,
     currentFallbackTitle: "",
     currentTopic: null,
     abortController: null,
@@ -75,14 +111,16 @@
           <div class="ld-drawer-title-group">
             <div class="ld-drawer-eyebrow">LINUX DO 预览</div>
             <h2 class="ld-drawer-title">点击帖子标题开始预览</h2>
-            <div class="ld-drawer-meta"></div>
           </div>
-          <div class="ld-drawer-actions">
-            <button class="ld-drawer-nav" type="button" data-nav="prev">上一帖</button>
-            <button class="ld-drawer-nav" type="button" data-nav="next">下一帖</button>
-            <button class="ld-drawer-settings-toggle" type="button" aria-expanded="false" aria-controls="ld-drawer-settings">选项</button>
-            <a class="ld-drawer-link" href="https://linux.do/latest" target="_blank" rel="noopener noreferrer">新标签打开</a>
-            <button class="ld-drawer-close" type="button" aria-label="关闭抽屉">关闭</button>
+          <div class="ld-drawer-toolbar">
+            <div class="ld-drawer-meta"></div>
+            <div class="ld-drawer-actions">
+              <button class="ld-drawer-nav" type="button" data-nav="prev">上一帖</button>
+              <button class="ld-drawer-nav" type="button" data-nav="next">下一帖</button>
+              <button class="ld-drawer-settings-toggle" type="button" aria-expanded="false" aria-controls="ld-drawer-settings">选项</button>
+              <a class="ld-drawer-link" href="https://linux.do/latest" target="_blank" rel="noopener noreferrer">新标签打开</a>
+              <button class="ld-drawer-close" type="button" aria-label="关闭抽屉">关闭</button>
+            </div>
           </div>
         </div>
         <div class="ld-drawer-settings" id="ld-drawer-settings" hidden>
@@ -240,15 +278,27 @@
   }
 
   function getTopicUrlFromLink(link) {
-    if (!link.matches(LINK_SELECTOR)) {
-      return null;
-    }
-
-    if (!link.closest(LIST_ROW_SELECTOR)) {
+    if (!(link instanceof HTMLAnchorElement)) {
       return null;
     }
 
     if (link.target && link.target !== "_self") {
+      return null;
+    }
+
+    if (link.hasAttribute("download")) {
+      return null;
+    }
+
+    if (!link.closest(MAIN_CONTENT_SELECTOR) || link.closest(`#${ROOT_ID}`)) {
+      return null;
+    }
+
+    if (link.closest(EXCLUDED_LINK_CONTEXT_SELECTOR)) {
+      return null;
+    }
+
+    if (!isPrimaryTopicLink(link)) {
       return null;
     }
 
@@ -264,17 +314,43 @@
       return null;
     }
 
-    url.hash = "";
-    url.search = "";
-
-    return url.toString().replace(/\/$/, "");
+    return normalizeTopicUrl(url);
   }
 
   function openDrawer(topicUrl, fallbackTitle, activeLink) {
     ensureDrawer();
 
+    const entryElement = activeLink instanceof Element
+      ? getTopicEntryContainer(activeLink)
+      : null;
+    const topicIdHint = activeLink instanceof Element
+      ? (getTopicIdHintFromLink(activeLink) || getTopicIdFromUrl(topicUrl))
+      : getTopicIdFromUrl(topicUrl);
+    const currentEntry = activeLink instanceof Element
+      ? getTopicEntries().find((entry) => entry.link === activeLink || entry.entryElement === entryElement)
+      : null;
+    const nextTrackingKey = getTopicTrackingKey(topicUrl, topicIdHint);
+    const isSameTrackedTopic = Boolean(state.currentTopicTrackingKey) && state.currentTopicTrackingKey === nextTrackingKey;
+
+    state.currentEntryElement = entryElement;
+    state.currentEntryKey = currentEntry?.entryKey || buildEntryKey(topicUrl, 1);
+    state.currentTopicIdHint = topicIdHint;
+    if (!isSameTrackedTopic) {
+      state.currentViewTracked = false;
+      state.currentTrackRequest = null;
+      state.currentTrackRequestKey = "";
+    }
+    state.currentTopicTrackingKey = nextTrackingKey;
+    state.currentResolvedTargetPostNumber = null;
+
     if (state.currentUrl === topicUrl && document.body.classList.contains(PAGE_OPEN_CLASS)) {
       highlightLink(activeLink);
+      syncNavigationState();
+
+      if (!state.currentViewTracked && !state.currentTrackRequest) {
+        loadTopic(topicUrl, fallbackTitle, topicIdHint);
+      }
+
       return;
     }
 
@@ -294,7 +370,7 @@
     setIframeModeEnabled(state.settings.previewMode === "iframe");
     updateSettingsPopoverPosition();
 
-    loadTopic(topicUrl, fallbackTitle);
+    loadTopic(topicUrl, fallbackTitle, topicIdHint);
   }
 
   function closeDrawer() {
@@ -307,6 +383,14 @@
     setIframeModeEnabled(false);
     state.root?.setAttribute("aria-hidden", "true");
     state.currentUrl = "";
+    state.currentEntryElement = null;
+    state.currentEntryKey = "";
+    state.currentTopicIdHint = null;
+    state.currentTopicTrackingKey = "";
+    state.currentViewTracked = false;
+    state.currentTrackRequest = null;
+    state.currentTrackRequestKey = "";
+    state.currentResolvedTargetPostNumber = null;
     state.currentFallbackTitle = "";
     state.currentTopic = null;
     state.meta.textContent = "";
@@ -329,28 +413,65 @@
 
   function getTopicEntries() {
     const entries = [];
-    const seen = new Set();
+    const seen = new WeakSet();
+    const duplicateCounts = new Map();
+    const mainContent = document.querySelector(MAIN_CONTENT_SELECTOR);
 
-    for (const row of document.querySelectorAll(LIST_ROW_SELECTOR)) {
-      const link = row.querySelector(LINK_SELECTOR);
+    if (!(mainContent instanceof Element)) {
+      return entries;
+    }
+
+    for (const link of mainContent.querySelectorAll(PRIMARY_TOPIC_LINK_SELECTOR)) {
       if (!(link instanceof HTMLAnchorElement)) {
         continue;
       }
 
       const url = getTopicUrlFromLink(link);
-      if (!url || seen.has(url)) {
+      if (!url) {
         continue;
       }
 
-      seen.add(url);
+      const entryElement = getTopicEntryContainer(link);
+      if (seen.has(entryElement)) {
+        continue;
+      }
+
+      seen.add(entryElement);
+      const occurrence = (duplicateCounts.get(url) || 0) + 1;
+      duplicateCounts.set(url, occurrence);
       entries.push({
+        entryElement,
+        entryKey: buildEntryKey(url, occurrence),
+        topicIdHint: getTopicIdHintFromLink(link) || getTopicIdFromUrl(url),
         url,
-        title: link.textContent.trim(),
+        title: link.textContent.trim() || url,
         link
       });
     }
 
     return entries;
+  }
+
+  function resolveCurrentEntryIndex(entries) {
+    if (!Array.isArray(entries) || !entries.length) {
+      return -1;
+    }
+
+    if (state.currentEntryKey) {
+      const indexByKey = entries.findIndex((entry) => entry.entryKey === state.currentEntryKey);
+      if (indexByKey !== -1) {
+        return indexByKey;
+      }
+    }
+
+    if (state.currentEntryElement) {
+      const indexByElement = entries.findIndex((entry) => entry.entryElement === state.currentEntryElement);
+      if (indexByElement !== -1) {
+        return indexByElement;
+      }
+    }
+
+    return entries.findIndex((entry) => entry.url === state.currentUrl);
   }
 
   function syncNavigationState() {
@@ -359,7 +480,7 @@
     }
 
     const entries = getTopicEntries();
-    const currentIndex = entries.findIndex((entry) => entry.url === state.currentUrl);
+    const currentIndex = resolveCurrentEntryIndex(entries);
     const hasDrawerOpen = Boolean(state.currentUrl);
 
     state.prevButton.disabled = !hasDrawerOpen || currentIndex <= 0;
@@ -368,7 +489,7 @@
 
   function navigateTopic(offset) {
     const entries = getTopicEntries();
-    const currentIndex = entries.findIndex((entry) => entry.url === state.currentUrl);
+    const currentIndex = resolveCurrentEntryIndex(entries);
     const nextEntry = currentIndex === -1 ? null : entries[currentIndex + offset];
 
     if (!nextEntry) {
@@ -380,41 +501,56 @@
     openDrawer(nextEntry.url, nextEntry.title, nextEntry.link);
   }
 
-  async function loadTopic(topicUrl, fallbackTitle) {
+  async function loadTopic(topicUrl, fallbackTitle, topicIdHint = null) {
     if (state.settings.previewMode === "iframe") {
+      if (!state.currentViewTracked) {
+        ensureTrackedTopicVisit(topicUrl, topicIdHint).catch(() => {});
+      }
       renderIframeFallback(topicUrl, fallbackTitle, null, true);
       return;
     }
 
     if (state.abortController) {
       state.abortController.abort();
+      if (!state.currentViewTracked) {
+        state.currentTrackRequest = null;
+        state.currentTrackRequestKey = "";
+      }
     }
 
     const controller = new AbortController();
     state.abortController = controller;
 
     try {
-      const response = await fetch(toTopicJsonUrl(topicUrl), {
-        credentials: "include",
-        signal: controller.signal,
-        headers: {
-          Accept: "application/json"
-        }
-      });
+      const targetSpec = getTopicTargetSpec(topicUrl, topicIdHint);
+      let resolvedTargetPostNumber = null;
+      let topic;
 
-      const contentType = response.headers.get("content-type") || "";
-
-      if (!response.ok || !contentType.includes("json")) {
-        throw new Error(`Unexpected response: ${response.status}`);
+      if (state.currentViewTracked) {
+        topic = await fetchTrackedTopicJson(topicUrl, controller.signal, topicIdHint, {
+          canonical: true,
+          trackVisit: false
+        });
+      } else {
+        topic = await ensureTrackedTopicVisit(topicUrl, topicIdHint, controller.signal);
       }
 
-      const topic = await response.json();
+      if (shouldFetchTargetedTopic(topic, targetSpec)) {
+        const targetedTopic = await fetchTrackedTopicJson(topicUrl, controller.signal, topicIdHint, {
+          canonical: false,
+          trackVisit: false
+        });
+        topic = mergeTopicPreviewData(topic, targetedTopic);
+        resolvedTargetPostNumber = resolveTopicTargetPostNumber(targetSpec, topic, targetedTopic);
+      } else {
+        resolvedTargetPostNumber = resolveTopicTargetPostNumber(targetSpec, topic, null);
+      }
 
       if (controller.signal.aborted || state.currentUrl !== topicUrl) {
         return;
       }
 
-      renderTopic(topic, topicUrl, fallbackTitle);
+      renderTopic(topic, topicUrl, fallbackTitle, resolvedTargetPostNumber);
     } catch (error) {
       if (controller.signal.aborted) {
         return;
@@ -428,7 +564,7 @@
     }
   }
 
-  function renderTopic(topic, topicUrl, fallbackTitle) {
+  function renderTopic(topic, topicUrl, fallbackTitle, resolvedTargetPostNumber = null) {
     setIframeModeEnabled(false);
 
     const posts = topic?.post_stream?.posts || [];
@@ -439,9 +575,12 @@
     }
 
     state.currentTopic = topic;
+    state.currentTopicIdHint = typeof topic?.id === "number" ? topic.id : state.currentTopicIdHint;
+    state.currentResolvedTargetPostNumber = resolvedTargetPostNumber;
     state.title.textContent = topic.title || fallbackTitle || "帖子预览";
     state.meta.textContent = buildTopicMeta(topic, posts.length);
     state.content.replaceChildren(buildTopicView(topic, posts));
+    scrollTopicViewToTargetPost(resolvedTargetPostNumber);
   }
 
   function buildTopicView(topic, posts) {
@@ -535,6 +674,9 @@
   function buildPostCard(post) {
     const article = document.createElement("article");
     article.className = "ld-post-card";
+    if (typeof post.post_number === "number") {
+      article.dataset.postNumber = String(post.post_number);
+    }
 
     const header = document.createElement("div");
     header.className = "ld-post-header";
@@ -618,8 +760,328 @@
     `;
   }
 
-  function toTopicJsonUrl(topicUrl) {
-    return `${topicUrl}.json`;
+  function toTopicJsonUrl(topicUrl, options = {}) {
+    const { canonical = false, trackVisit = true, topicIdHint = null } = options;
+    const url = new URL(topicUrl);
+    const parsed = parseTopicPath(url.pathname, topicIdHint);
+
+    url.hash = "";
+    url.search = "";
+    url.pathname = `${canonical ? (parsed?.topicPath || stripTrailingSlash(url.pathname)) : stripTrailingSlash(url.pathname)}.json`;
+    if (trackVisit) {
+      url.searchParams.set("track_visit", "true");
+    }
+    return url.toString();
+  }
+
+  async function fetchTrackedTopicJson(topicUrl, signal, topicIdHint = null, options = {}) {
+    const { canonical = false, trackVisit = true } = options;
+    const topicId = topicIdHint || getTopicIdFromUrl(topicUrl);
+    const response = await fetch(toTopicJsonUrl(topicUrl, { canonical, trackVisit, topicIdHint }), {
+      credentials: "include",
+      signal,
+      headers: trackVisit ? buildTopicRequestHeaders(topicId) : { Accept: "application/json" }
+    });
+
+    const contentType = response.headers.get("content-type") || "";
+
+    if (!response.ok || !contentType.includes("json")) {
+      throw new Error(`Unexpected response: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  function ensureTrackedTopicVisit(topicUrl, topicIdHint = null, signal) {
+    const trackingKey = getTopicTrackingKey(topicUrl, topicIdHint);
+
+    if (state.currentTrackRequest && state.currentTrackRequestKey === trackingKey) {
+      return state.currentTrackRequest;
+    }
+
+    const request = fetchTrackedTopicJson(topicUrl, signal, topicIdHint, {
+      canonical: true,
+      trackVisit: true
+    }).then((topic) => {
+      if (state.currentTopicTrackingKey === trackingKey) {
+        state.currentViewTracked = true;
+      }
+      return topic;
+    }).finally(() => {
+      if (state.currentTrackRequest === request) {
+        state.currentTrackRequest = null;
+        state.currentTrackRequestKey = "";
+      }
+    });
+
+    state.currentTrackRequest = request;
+    state.currentTrackRequestKey = trackingKey;
+    return request;
+  }
+
+  function buildTopicRequestHeaders(topicId) {
+    const headers = {
+      Accept: "application/json"
+    };
+
+    if (topicId) {
+      headers["Discourse-Track-View"] = "true";
+      headers["Discourse-Track-View-Topic-Id"] = String(topicId);
+    }
+
+    return headers;
+  }
+
+  function topicHasPostNumber(topic, postNumber) {
+    if (!postNumber) {
+      return false;
+    }
+
+    return (topic?.post_stream?.posts || []).some((post) => post?.post_number === postNumber);
+  }
+
+  function getTopicTargetSpec(topicUrl, topicIdHint = null) {
+    try {
+      const parsed = parseTopicPath(new URL(topicUrl).pathname, topicIdHint);
+      if (!parsed) {
+        return null;
+      }
+
+      return {
+        hasTarget: parsed.targetSegments.length > 0,
+        targetSegments: parsed.targetSegments,
+        targetPostNumber: parsed.targetPostNumber,
+        targetToken: parsed.targetToken
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  function shouldFetchTargetedTopic(topic, targetSpec) {
+    if (!targetSpec?.hasTarget || state.settings.postMode === "first") {
+      return false;
+    }
+
+    if (targetSpec.targetPostNumber) {
+      return !topicHasPostNumber(topic, targetSpec.targetPostNumber);
+    }
+
+    if (targetSpec.targetToken === "last") {
+      return !topicHasCompletePostStream(topic);
+    }
+
+    return true;
+  }
+
+  function topicHasCompletePostStream(topic) {
+    const posts = topic?.post_stream?.posts || [];
+    const totalPosts = Number(topic?.posts_count || 0);
+    return posts.length > 0 && totalPosts > 0 && posts.length >= totalPosts;
+  }
+
+  function resolveTopicTargetPostNumber(targetSpec, topic, targetedTopic) {
+    if (!targetSpec?.hasTarget) {
+      return null;
+    }
+
+    if (targetSpec.targetPostNumber) {
+      if (topicHasPostNumber(targetedTopic, targetSpec.targetPostNumber) || topicHasPostNumber(topic, targetSpec.targetPostNumber)) {
+        return targetSpec.targetPostNumber;
+      }
+      return null;
+    }
+
+    const sourcePosts = targetedTopic?.post_stream?.posts || [];
+    if (sourcePosts.length > 0) {
+      if (targetSpec.targetToken === "last") {
+        return sourcePosts[sourcePosts.length - 1]?.post_number || null;
+      }
+
+      return sourcePosts[0]?.post_number || null;
+    }
+
+    const fallbackPosts = topic?.post_stream?.posts || [];
+    if (targetSpec.targetToken === "last" && topicHasCompletePostStream(topic) && fallbackPosts.length > 0) {
+      return fallbackPosts[fallbackPosts.length - 1]?.post_number || null;
+    }
+
+    return null;
+  }
+
+  function mergeTopicPreviewData(primaryTopic, supplementalTopic) {
+    const mergedPosts = new Map();
+
+    for (const post of primaryTopic?.post_stream?.posts || []) {
+      if (typeof post?.post_number === "number") {
+        mergedPosts.set(post.post_number, post);
+      }
+    }
+
+    for (const post of supplementalTopic?.post_stream?.posts || []) {
+      if (typeof post?.post_number === "number" && !mergedPosts.has(post.post_number)) {
+        mergedPosts.set(post.post_number, post);
+      }
+    }
+
+    const posts = Array.from(mergedPosts.values()).sort((left, right) => left.post_number - right.post_number);
+
+    return {
+      ...primaryTopic,
+      post_stream: {
+        ...(primaryTopic?.post_stream || {}),
+        posts
+      }
+    };
+  }
+
+  function isPrimaryTopicLink(link) {
+    if (!(link instanceof HTMLAnchorElement)) {
+      return false;
+    }
+
+    if (link.closest(LIST_ROW_SELECTOR)) {
+      return link.matches(PRIMARY_TOPIC_LINK_SELECTOR);
+    }
+
+    return link.matches(PRIMARY_TOPIC_LINK_SELECTOR);
+  }
+
+  function buildEntryKey(url, occurrence) {
+    return occurrence > 1 ? `${url}::${occurrence}` : url;
+  }
+
+  function getTopicEntryContainer(link) {
+    if (!(link instanceof Element)) {
+      return null;
+    }
+
+    return link.closest(ENTRY_CONTAINER_SELECTOR)
+      || link.closest("[data-topic-id]")
+      || link;
+  }
+
+  function readTopicIdHint(element) {
+    if (!(element instanceof Element)) {
+      return null;
+    }
+
+    const rawTopicId = element.getAttribute("data-topic-id") || element.dataset?.topicId || "";
+    return /^\d+$/.test(rawTopicId) ? Number(rawTopicId) : null;
+  }
+
+  function getTopicIdHintFromLink(link) {
+    if (!(link instanceof Element)) {
+      return null;
+    }
+
+    const directTopicId = readTopicIdHint(link);
+    if (directTopicId) {
+      return directTopicId;
+    }
+
+    const hintedAncestor = link.closest("[data-topic-id]");
+    if (hintedAncestor) {
+      return readTopicIdHint(hintedAncestor);
+    }
+
+    return readTopicIdHint(getTopicEntryContainer(link));
+  }
+
+  function getTopicTrackingKey(topicUrl, topicIdHint = null) {
+    try {
+      const parsed = parseTopicPath(new URL(topicUrl).pathname, topicIdHint);
+      if (parsed?.topicId) {
+        return `topic:${parsed.topicId}`;
+      }
+      return parsed?.topicPath || topicUrl;
+    } catch {
+      return topicUrl;
+    }
+  }
+
+  function normalizeTopicUrl(url) {
+    url.hash = "";
+    url.search = "";
+    url.pathname = stripTrailingSlash(url.pathname);
+
+    return url.toString().replace(/\/$/, "");
+  }
+
+  function getTopicIdFromUrl(topicUrl, topicIdHint = null) {
+    try {
+      return parseTopicPath(new URL(topicUrl).pathname, topicIdHint)?.topicId || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function getTopicTargetPostNumber(topicUrl, topicIdHint = null) {
+    return getTopicTargetSpec(topicUrl, topicIdHint)?.targetPostNumber || null;
+  }
+
+  function scrollTopicViewToTargetPost(targetPostNumber) {
+    if (!targetPostNumber) {
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      const target = state.content?.querySelector(`.ld-post-card[data-post-number="${targetPostNumber}"]`);
+      target?.scrollIntoView({ block: "start", behavior: "auto" });
+    });
+  }
+
+  function parseTopicPath(pathname, topicIdHint = null) {
+    const trimmedPath = stripTrailingSlash(pathname);
+    const segments = trimmedPath.split("/");
+    const first = segments[2] || "";
+    const second = segments[3] || "";
+
+    if (segments[1] !== "t") {
+      return null;
+    }
+
+    const firstIsNumber = /^\d+$/.test(first);
+    const secondIsNumber = /^\d+$/.test(second);
+
+    let topicId = null;
+    let topicPath = "";
+    let extraSegments = [];
+
+    if (firstIsNumber) {
+      topicId = Number(first);
+      topicPath = `/t/${first}`;
+      extraSegments = segments.slice(3).filter(Boolean);
+    } else if (secondIsNumber) {
+      topicId = Number(second);
+      topicPath = `/t/${first}/${second}`;
+      extraSegments = segments.slice(4).filter(Boolean);
+    } else {
+      return null;
+    }
+
+    const destinationPath = extraSegments.length > 0
+      ? `${topicPath}/${extraSegments.join("/")}`
+      : topicPath;
+    const targetPostNumber = /^\d+$/.test(extraSegments[0] || "")
+      ? Number(extraSegments[0])
+      : null;
+    const targetToken = !targetPostNumber && extraSegments[0]
+      ? String(extraSegments[0])
+      : null;
+
+    return {
+      topicId,
+      topicPath,
+      destinationPath,
+      targetSegments: extraSegments,
+      targetPostNumber,
+      targetToken
+    };
+  }
+
+  function stripTrailingSlash(pathname) {
+    return pathname.replace(/\/+$/, "") || pathname;
   }
 
   function avatarUrl(template) {
@@ -811,6 +1273,14 @@
       if (state.abortController) {
         state.abortController.abort();
         state.abortController = null;
+        if (!state.currentViewTracked) {
+          state.currentTrackRequest = null;
+          state.currentTrackRequestKey = "";
+        }
+      }
+
+      if (!state.currentViewTracked) {
+        ensureTrackedTopicVisit(state.currentUrl, state.currentTopicIdHint).catch(() => {});
       }
 
       renderIframeFallback(state.currentUrl, state.currentFallbackTitle, null, true);
@@ -818,11 +1288,17 @@
     }
 
     if (state.currentTopic) {
-      renderTopic(state.currentTopic, state.currentUrl, state.currentFallbackTitle);
-      return;
+      const targetSpec = getTopicTargetSpec(state.currentUrl, state.currentTopicIdHint);
+      const needsReload = shouldFetchTargetedTopic(state.currentTopic, targetSpec)
+        && !state.currentResolvedTargetPostNumber;
+
+      if (!needsReload) {
+        renderTopic(state.currentTopic, state.currentUrl, state.currentFallbackTitle, state.currentResolvedTargetPostNumber);
+        return;
+      }
     }
 
-    loadTopic(state.currentUrl, state.currentFallbackTitle);
+    loadTopic(state.currentUrl, state.currentFallbackTitle, state.currentTopicIdHint);
   }
 
   function clampDrawerWidth(value) {
@@ -942,10 +1418,14 @@
     });
   }
 
+  function hasPreviewableTopicLinks() {
+    return getTopicEntries().length > 0;
+  }
+
   function handleLocationChange() {
     state.lastLocation = location.href;
 
-    if (!document.querySelector(LIST_ROW_SELECTOR)) {
+    if (!hasPreviewableTopicLinks()) {
       closeDrawer();
       return;
     }

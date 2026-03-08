@@ -2,21 +2,14 @@
   "manifest_version": 3,
   "name": "Linux.do SidePeek",
   "version": "0.1.0",
-  "description": "Preview Linux.do topics in a right-side drawer without leaving the topic list.",
+  "description": "Preview Linux.do topics in a right-side drawer without leaving the current page.",
   "host_permissions": [
     "https://linux.do/t/*"
   ],
   "content_scripts": [
     {
       "matches": [
-        "https://linux.do/",
-        "https://linux.do/latest*",
-        "https://linux.do/new*",
-        "https://linux.do/unread*",
-        "https://linux.do/top*",
-        "https://linux.do/hot*",
-        "https://linux.do/c/*",
-        "https://linux.do/tag/*"
+        "https://linux.do/*"
       ],
       "js": [
         "src/content.js"
