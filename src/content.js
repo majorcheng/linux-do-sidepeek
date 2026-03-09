@@ -5,6 +5,9 @@
   const ACTIVE_LINK_CLASS = "ld-drawer-topic-link-active";
   const IFRAME_MODE_CLASS = "ld-drawer-iframe-mode";
   const SETTINGS_KEY = "ld-drawer-settings-v1";
+  const IMAGE_PREVIEW_SCALE_MIN = 1;
+  const IMAGE_PREVIEW_SCALE_MAX = 4;
+  const IMAGE_PREVIEW_SCALE_STEP = 0.2;
   const DEFAULT_SETTINGS = {
     previewMode: "smart",
     postMode: "all",
@@ -63,6 +66,10 @@
     title: null,
     meta: null,
     content: null,
+    imagePreview: null,
+    imagePreviewImage: null,
+    imagePreviewCloseButton: null,
+    imagePreviewScale: 1,
     openInTab: null,
     settingsPanel: null,
     settingsCard: null,
@@ -168,6 +175,12 @@
         <div class="ld-drawer-body">
           <div class="ld-drawer-content"></div>
         </div>
+        <div class="ld-image-preview" hidden aria-hidden="true">
+          <button class="ld-image-preview-close" type="button" aria-label="关闭图片预览">关闭</button>
+          <div class="ld-image-preview-stage">
+            <img class="ld-image-preview-image" alt="图片预览" />
+          </div>
+        </div>
       </div>
     `;
 
@@ -178,6 +191,9 @@
     state.title = root.querySelector(".ld-drawer-title");
     state.meta = root.querySelector(".ld-drawer-meta");
     state.content = root.querySelector(".ld-drawer-content");
+    state.imagePreview = root.querySelector(".ld-image-preview");
+    state.imagePreviewImage = root.querySelector(".ld-image-preview-image");
+    state.imagePreviewCloseButton = root.querySelector(".ld-image-preview-close");
     state.openInTab = root.querySelector(".ld-drawer-link");
     state.settingsPanel = root.querySelector(".ld-drawer-settings");
     state.settingsCard = root.querySelector(".ld-drawer-settings-card");
@@ -191,6 +207,8 @@
     state.prevButton.addEventListener("click", () => navigateTopic(-1));
     state.nextButton.addEventListener("click", () => navigateTopic(1));
     state.settingsToggle.addEventListener("click", toggleSettingsPanel);
+    root.addEventListener("click", handleDrawerRootClick);
+    root.addEventListener("wheel", handleDrawerRootWheel, { passive: false });
     state.settingsPanel.addEventListener("click", handleSettingsPanelClick);
     state.settingsPanel.addEventListener("change", handleSettingsChange);
     state.settingsCloseButton.addEventListener("click", () => setSettingsPanelOpen(false));
@@ -247,6 +265,13 @@
   }
 
   function handleKeydown(event) {
+    if (event.key === "Escape" && !state.imagePreview?.hidden) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeImagePreview();
+      return;
+    }
+
     if (event.key === "Escape" && !state.settingsPanel?.hidden) {
       event.preventDefault();
       event.stopPropagation();
@@ -397,6 +422,7 @@
     state.currentFallbackTitle = "";
     state.currentTopic = null;
     state.meta.textContent = "";
+    closeImagePreview();
     clearHighlight();
     setSettingsPanelOpen(false);
     syncNavigationState();
@@ -505,6 +531,8 @@
   }
 
   async function loadTopic(topicUrl, fallbackTitle, topicIdHint = null) {
+    closeImagePreview();
+
     if (state.settings.previewMode === "iframe") {
       if (!state.currentViewTracked) {
         ensureTrackedTopicVisit(topicUrl, topicIdHint).catch(() => {});
@@ -834,6 +862,163 @@
 
     article.append(header, body);
     return article;
+  }
+
+  function handleDrawerRootClick(event) {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    if (!state.imagePreview?.hidden) {
+      if (target.closest(".ld-image-preview-close") || !target.closest(".ld-image-preview-image")) {
+        event.preventDefault();
+        closeImagePreview();
+      }
+      return;
+    }
+
+    const image = target.closest(".ld-post-body img");
+    if (!(image instanceof HTMLImageElement)) {
+      return;
+    }
+
+    const imageLink = image.closest("a[href]");
+    if (imageLink instanceof HTMLAnchorElement && !looksLikeImageUrl(imageLink.href)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    openImagePreview(image);
+  }
+
+  function openImagePreview(image) {
+    if (!state.imagePreview || !state.imagePreviewImage) {
+      return;
+    }
+
+    const previewSrc = getPreviewImageSrc(image);
+    if (!previewSrc) {
+      return;
+    }
+
+    resetImagePreviewScale();
+    state.imagePreviewImage.src = previewSrc;
+    state.imagePreviewImage.alt = image.alt || "图片预览";
+    state.imagePreviewImage.classList.remove("is-ready");
+    state.imagePreview.hidden = false;
+    state.imagePreview.setAttribute("aria-hidden", "false");
+    if (state.imagePreviewImage.complete) {
+      state.imagePreviewImage.classList.add("is-ready");
+    } else {
+      state.imagePreviewImage.addEventListener("load", handlePreviewImageLoad, { once: true });
+      state.imagePreviewImage.addEventListener("error", handlePreviewImageLoad, { once: true });
+    }
+    state.imagePreviewCloseButton?.focus();
+  }
+
+  function closeImagePreview() {
+    if (!state.imagePreview || !state.imagePreviewImage) {
+      return;
+    }
+
+    state.imagePreview.hidden = true;
+    state.imagePreview.setAttribute("aria-hidden", "true");
+    resetImagePreviewScale();
+    state.imagePreviewImage.classList.remove("is-ready");
+    state.imagePreviewImage.removeAttribute("src");
+    state.imagePreviewImage.alt = "图片预览";
+  }
+
+  function handlePreviewImageLoad() {
+    state.imagePreviewImage?.classList.add("is-ready");
+  }
+
+  function handleDrawerRootWheel(event) {
+    if (state.imagePreview?.hidden) {
+      return;
+    }
+
+    const target = event.target;
+    if (!(target instanceof Element) || !target.closest(".ld-image-preview-stage")) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const nextScale = clampImagePreviewScale(
+      state.imagePreviewScale + (event.deltaY < 0 ? IMAGE_PREVIEW_SCALE_STEP : -IMAGE_PREVIEW_SCALE_STEP)
+    );
+
+    if (nextScale === state.imagePreviewScale) {
+      return;
+    }
+
+    updateImagePreviewTransformOrigin(event.clientX, event.clientY);
+    state.imagePreviewScale = nextScale;
+    applyImagePreviewScale();
+  }
+
+  function resetImagePreviewScale() {
+    state.imagePreviewScale = IMAGE_PREVIEW_SCALE_MIN;
+    if (state.imagePreviewImage) {
+      state.imagePreviewImage.style.transformOrigin = "center center";
+    }
+    applyImagePreviewScale();
+  }
+
+  function applyImagePreviewScale() {
+    if (!state.imagePreview || !state.imagePreviewImage) {
+      return;
+    }
+
+    state.imagePreviewImage.style.setProperty("--ld-image-preview-scale", String(state.imagePreviewScale));
+    state.imagePreview.classList.toggle("is-zoomed", state.imagePreviewScale > IMAGE_PREVIEW_SCALE_MIN);
+  }
+
+  function clampImagePreviewScale(value) {
+    return Math.min(IMAGE_PREVIEW_SCALE_MAX, Math.max(IMAGE_PREVIEW_SCALE_MIN, Number(value) || IMAGE_PREVIEW_SCALE_MIN));
+  }
+
+  function updateImagePreviewTransformOrigin(clientX, clientY) {
+    if (!state.imagePreviewImage) {
+      return;
+    }
+
+    const rect = state.imagePreviewImage.getBoundingClientRect();
+    if (!rect.width || !rect.height) {
+      return;
+    }
+
+    const offsetX = ((clientX - rect.left) / rect.width) * 100;
+    const offsetY = ((clientY - rect.top) / rect.height) * 100;
+    const originX = Math.min(100, Math.max(0, offsetX));
+    const originY = Math.min(100, Math.max(0, offsetY));
+
+    state.imagePreviewImage.style.transformOrigin = `${originX}% ${originY}%`;
+  }
+
+  function getPreviewImageSrc(image) {
+    if (!(image instanceof HTMLImageElement)) {
+      return "";
+    }
+
+    const link = image.closest("a[href]");
+    if (link instanceof HTMLAnchorElement && looksLikeImageUrl(link.href)) {
+      return link.href;
+    }
+
+    return image.currentSrc || image.src || "";
+  }
+
+  function looksLikeImageUrl(url) {
+    try {
+      const parsed = new URL(url, location.href);
+      return /\.(avif|bmp|gif|jpe?g|png|svg|webp)(?:$|[?#])/i.test(parsed.pathname);
+    } catch {
+      return false;
+    }
   }
 
   function renderIframeFallback(topicUrl, fallbackTitle, error, forcedIframe = false) {

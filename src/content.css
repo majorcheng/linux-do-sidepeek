@@ -1,5 +1,6 @@
 :root {
   --ld-drawer-width: clamp(360px, 42vw, 920px);
+  --ld-image-preview-scale: 1;
 }
 
 body.ld-drawer-page-open {
@@ -66,6 +67,82 @@ body.ld-drawer-page-open #ld-drawer-root {
   border-left: 1px solid var(--primary-low, rgba(15, 23, 42, 0.12));
   box-shadow: -16px 0 40px rgba(15, 23, 42, 0.18);
   pointer-events: auto;
+}
+
+#ld-drawer-root .ld-image-preview {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 18px 18px;
+  background: rgba(15, 23, 42, 0.72);
+  backdrop-filter: blur(6px);
+  opacity: 1;
+  animation: ld-image-preview-fade-in 180ms ease-out;
+}
+
+#ld-drawer-root .ld-image-preview[hidden] {
+  display: none !important;
+}
+
+#ld-drawer-root .ld-image-preview-close {
+  position: absolute;
+  top: 14px;
+  right: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(15, 23, 42, 0.4);
+  color: #fff;
+  border-radius: 999px;
+  padding: 7px 11px;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+
+#ld-drawer-root .ld-image-preview-close:hover {
+  background: rgba(15, 23, 42, 0.58);
+  border-color: rgba(255, 255, 255, 0.44);
+  transform: translateY(-1px);
+}
+
+#ld-drawer-root .ld-image-preview-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+#ld-drawer-root .ld-image-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 14px;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.38);
+  background: rgba(255, 255, 255, 0.04);
+  opacity: 0;
+  transform: translateY(10px) scale(calc(0.985 * var(--ld-image-preview-scale, 1)));
+  transition: opacity 0.2s ease, transform 0.24s ease, box-shadow 0.24s ease;
+  transform-origin: center center;
+  will-change: transform;
+}
+
+#ld-drawer-root .ld-image-preview-image.is-ready {
+  opacity: 1;
+  transform: translateY(0) scale(var(--ld-image-preview-scale, 1));
+}
+
+#ld-drawer-root .ld-image-preview.is-zoomed {
+  cursor: zoom-out;
+}
+
+#ld-drawer-root .ld-image-preview.is-zoomed .ld-image-preview-image {
+  box-shadow: 0 24px 54px rgba(0, 0, 0, 0.44);
 }
 
 #ld-drawer-root .ld-drawer-header {
@@ -379,6 +456,10 @@ body.ld-drawer-page-open #ld-drawer-root {
   max-width: 100%;
 }
 
+#ld-drawer-root .ld-post-body img {
+  cursor: zoom-in;
+}
+
 #ld-drawer-root .ld-post-body blockquote {
   margin-left: 0;
   padding-left: 14px;
@@ -467,6 +548,16 @@ body.ld-drawer-page-open #ld-drawer-root {
   }
 }
 
+@keyframes ld-image-preview-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
 @media (max-width: 1120px) {
   body.ld-drawer-page-open {
     padding-right: 0 !important;
@@ -489,6 +580,34 @@ body.ld-drawer-page-open #ld-drawer-root {
 @media (max-width: 720px) {
   #ld-drawer-root {
     width: 100vw;
+  }
+
+  #ld-drawer-root .ld-image-preview {
+    padding: max(18px, env(safe-area-inset-top, 0px) + 8px)
+      12px
+      max(12px, env(safe-area-inset-bottom, 0px) + 8px);
+    align-items: stretch;
+  }
+
+  #ld-drawer-root .ld-image-preview-close {
+    top: max(10px, env(safe-area-inset-top, 0px) + 2px);
+    right: 12px;
+    padding: 8px 12px;
+    background: rgba(15, 23, 42, 0.56);
+    backdrop-filter: blur(10px);
+  }
+
+  #ld-drawer-root .ld-image-preview-stage {
+    align-items: center;
+    padding-top: 40px;
+    padding-bottom: 6px;
+  }
+
+  #ld-drawer-root .ld-image-preview-image {
+    max-width: 100%;
+    max-height: calc(100dvh - 88px);
+    border-radius: 12px;
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.32);
   }
 
   #ld-drawer-root .ld-drawer-header {
@@ -515,5 +634,14 @@ body.ld-drawer-page-open #ld-drawer-root {
   #ld-drawer-root .ld-drawer-settings {
     padding-left: 12px;
     padding-right: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #ld-drawer-root .ld-image-preview,
+  #ld-drawer-root .ld-image-preview-close,
+  #ld-drawer-root .ld-image-preview-image {
+    animation: none;
+    transition: none;
   }
 }
