@@ -335,6 +335,22 @@
       setReplyPanelOpen(false);
     }
 
+    if (handleTopicTrackerClick(target)) {
+      return;
+    }
+
+    const link = target.closest("a[href]");
+    if (link && !link.closest(`#${ROOT_ID}`)) {
+      const topicUrl = getTopicUrlFromLink(link);
+      if (topicUrl) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        openDrawer(topicUrl, link.textContent.trim(), link);
+        return;
+      }
+    }
+
     if (
       state.settings.drawerMode === "overlay" &&
       document.body.classList.contains(PAGE_OPEN_CLASS) &&
@@ -345,25 +361,6 @@
       closeDrawer();
       return;
     }
-
-    if (handleTopicTrackerClick(target)) {
-      return;
-    }
-
-    const link = target.closest("a[href]");
-    if (!link || link.closest(`#${ROOT_ID}`)) {
-      return;
-    }
-
-    const topicUrl = getTopicUrlFromLink(link);
-    if (!topicUrl) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    openDrawer(topicUrl, link.textContent.trim(), link);
   }
 
   function handleKeydown(event) {
