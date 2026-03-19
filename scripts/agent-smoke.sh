@@ -13,6 +13,7 @@ DEFAULT_CASES=(
   "AGENT-CHROME-006"
   "AGENT-CHROME-008"
   "AGENT-CHROME-009"
+  "AGENT-CHROME-010"
 )
 
 CASES=("${DEFAULT_CASES[@]}")
@@ -331,6 +332,147 @@ EOF
   ab_eval "$script"
 }
 
+settings_values() {
+  local script
+  script=$(cat <<'EOF'
+(() => {
+  const values = {};
+  for (const control of document.querySelectorAll("#ld-drawer-settings [data-setting]")) {
+    const key = control.getAttribute("data-setting");
+    if (!key) {
+      continue;
+    }
+
+    values[key] = control.value;
+  }
+
+  return values;
+})()
+EOF
+)
+  ab_eval "$script"
+}
+
+set_setting_value() {
+  local key=$1
+  local value=$2
+  local key_json value_json script
+  key_json=$(printf '%s' "$key" | jq -Rs .)
+  value_json=$(printf '%s' "$value" | jq -Rs .)
+  ensure_settings_open
+  script=$(cat <<EOF
+(() => {
+  const key = $key_json;
+  const value = $value_json;
+  const select = document.querySelector(\`#ld-drawer-settings [data-setting="\${key}"]\`);
+  if (!(select instanceof HTMLSelectElement)) {
+    return { ok: false, reason: "setting-not-found", key };
+  }
+
+  const hasOption = Array.from(select.options).some((option) => option.value === value);
+  if (!hasOption) {
+    return { ok: false, reason: "option-not-found", key, value };
+  }
+
+  if (select.value === value) {
+    return { ok: true, changed: false, key, value };
+  }
+
+  select.value = value;
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+  return { ok: true, changed: true, key, value };
+})()
+EOF
+)
+  ab_eval "$script"
+}
+
+restore_settings_subset() {
+  local settings_json=$1
+  local key value
+  for key in previewMode postMode replyOrder; do
+    value=$(echo "$settings_json" | jq -r --arg key "$key" '.[$key] // empty')
+    if [ -z "$value" ]; then
+      continue
+    fi
+
+    set_setting_value "$key" "$value" >/dev/null || true
+    ab wait 1200 >/dev/null
+  done
+}
+
+configure_latest_replies_refresh_mode() {
+  local result
+
+  result=$(set_setting_value previewMode smart)
+  if [ "$(echo "$result" | jq -r '.ok')" != "true" ]; then
+    echo "$result"
+    return 1
+  fi
+  ab wait 1200 >/dev/null
+
+  result=$(set_setting_value postMode all)
+  if [ "$(echo "$result" | jq -r '.ok')" != "true" ]; then
+    echo "$result"
+    return 1
+  fi
+  ab wait 1200 >/dev/null
+
+  result=$(set_setting_value replyOrder latestFirst)
+  if [ "$(echo "$result" | jq -r '.ok')" != "true" ]; then
+    echo "$result"
+    return 1
+  fi
+  ab wait 1800 >/dev/null
+
+  echo "$result"
+}
+
+refresh_button_state() {
+  local script
+  script=$(cat <<'EOF'
+(() => {
+  const button = document.querySelector("#ld-drawer-root .ld-drawer-refresh");
+  return {
+    exists: button instanceof HTMLButtonElement,
+    hidden: button?.hidden ?? null,
+    disabled: button?.disabled ?? null,
+    text: button?.textContent?.trim() || null,
+    title: document.querySelector("#ld-drawer-root .ld-drawer-title")?.textContent?.trim() || null,
+    pageUrl: location.href,
+    pageOpen: document.body.classList.contains("ld-drawer-page-open")
+  };
+})()
+EOF
+)
+  ab_eval "$script"
+}
+
+click_refresh_button() {
+  local script
+  script=$(cat <<'EOF'
+(() => {
+  const button = document.querySelector("#ld-drawer-root .ld-drawer-refresh");
+  if (!(button instanceof HTMLButtonElement)) {
+    return { ok: false, reason: "refresh-button-not-found" };
+  }
+
+  const title = document.querySelector("#ld-drawer-root .ld-drawer-title")?.textContent?.trim() || null;
+  button.click();
+  return {
+    ok: true,
+    hidden: button.hidden,
+    disabled: button.disabled,
+    text: button.textContent?.trim() || null,
+    title,
+    pageUrl: location.href
+  };
+})()
+EOF
+)
+  ab_eval "$script"
+}
+
 run_001() {
   local case_id="AGENT-CHROME-001"
   local click_result state title clicked_text
@@ -538,6 +680,63 @@ run_009() {
   fi
 }
 
+run_010() {
+  local case_id="AGENT-CHROME-010"
+  local original_settings setup_result before click after final_state
+  local passed=0
+  local detail=""
+
+  open_topic_by_index 0 >/dev/null || {
+    record_fail "$case_id" "无法打开抽屉"
+    return 0
+  }
+
+  original_settings=$(settings_values)
+  if [ -z "$(echo "$original_settings" | jq -r '.previewMode // empty')" ]; then
+    record_fail "$case_id" "无法读取当前设置"
+    return 0
+  fi
+
+  setup_result=$(configure_latest_replies_refresh_mode) || {
+    restore_settings_subset "$original_settings"
+    record_fail "$case_id" "无法切到最新回复刷新场景: $setup_result"
+    return 0
+  }
+
+  before=$(refresh_button_state)
+  click=$(click_refresh_button)
+  ab wait 1800 >/dev/null
+  after=$(refresh_button_state)
+  final_state=$(drawer_state)
+  restore_settings_subset "$original_settings"
+
+  if [ "$(echo "$before" | jq -r '.exists')" = "true" ] \
+    && [ "$(echo "$before" | jq -r '.hidden')" = "false" ] \
+    && [ "$(echo "$before" | jq -r '.disabled')" = "false" ] \
+    && [ "$(echo "$before" | jq -r '.text // empty')" = "刷新" ] \
+    && [ "$(echo "$click" | jq -r '.ok')" = "true" ] \
+    && [ "$(echo "$click" | jq -r '.disabled')" = "true" ] \
+    && [ "$(echo "$click" | jq -r '.text // empty')" = "刷新中..." ] \
+    && [ "$(echo "$click" | jq -r '.pageUrl // empty')" = "$BASE_URL" ] \
+    && [ "$(echo "$after" | jq -r '.exists')" = "true" ] \
+    && [ "$(echo "$after" | jq -r '.hidden')" = "false" ] \
+    && [ "$(echo "$after" | jq -r '.disabled')" = "false" ] \
+    && [ "$(echo "$after" | jq -r '.text // empty')" = "刷新" ] \
+    && [ "$(echo "$final_state" | jq -r '.pageUrl // empty')" = "$BASE_URL" ] \
+    && [ "$(echo "$final_state" | jq -r '.pageOpen')" = "true" ]; then
+    passed=1
+    detail="title=$(echo "$after" | jq -r '.title // empty')"
+  else
+    detail="setup=$(echo "$setup_result" | jq -c '.') before=$(echo "$before" | jq -c '{exists, hidden, disabled, text}') click=$(echo "$click" | jq -c '{ok, hidden, disabled, text, pageUrl}') after=$(echo "$after" | jq -c '{exists, hidden, disabled, text}')"
+  fi
+
+  if [ "$passed" -eq 1 ]; then
+    record_pass "$case_id" "$detail"
+  else
+    record_fail "$case_id" "$detail"
+  fi
+}
+
 run_case() {
   local case_id=$1
   case "$case_id" in
@@ -549,6 +748,7 @@ run_case() {
     AGENT-CHROME-006) run_006 ;;
     AGENT-CHROME-008) run_008 ;;
     AGENT-CHROME-009) run_009 ;;
+    AGENT-CHROME-010) run_010 ;;
     *)
       record_fail "$case_id" "未知用例 ID"
       ;;
