@@ -65,15 +65,31 @@
 
 ## 安装
 
-1. 打开 Chrome / Edge 的扩展管理页
+### Chrome / Edge
+
+1. 打开扩展管理页
 2. 打开“开发者模式”
 3. 选择“加载已解压的扩展程序”
 4. 选择当前目录 `/mnt/hdd/work/temp/linux.do_improvement`
 
+### Firefox
+
+1. 打开 `about:debugging#/runtime/this-firefox`
+2. 点击“临时载入附加组件”
+3. 选择当前目录里的 `manifest.json`
+4. 或者选择 Release 附件里的 `*-firefox-unsigned.xpi` 做临时安装
+
+注意：
+- 上面的 Firefox 安装方式主要用于本地测试或临时加载
+- 如果要给普通 Firefox 用户长期安装，仍需要经过 Mozilla 的签名分发流程
+
 ## 发布
 
 - 推送标签 `v*`（例如 `v0.4.0`）后，GitHub Actions 会自动打包扩展并创建 Release
-- Release 附件会产出一个可下载的 ZIP 包，包含 `manifest.json` 和 `src/`
+- Release 附件会同时产出：
+  - `linux-do-sidepeek-<version>-chrome.zip`
+  - `linux-do-sidepeek-<version>-firefox-unsigned.xpi`
+- Firefox 附件是未签名包，适合临时加载或后续签名；它不等同于可直接长期安装的正式发行包
 - 建议发版时把 `CHANGELOG.md` 对应条目同步到 GitHub Release Notes，方便直接查看更新记录与致谢
 
 ## 致谢

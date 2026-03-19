@@ -3,6 +3,11 @@
   "name": "Linux.do SidePeek",
   "version": "0.4.0",
   "description": "Preview Linux.do topics in a right-side drawer without leaving the current page.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "@linux-do-sidepeek"
+    }
+  },
   "host_permissions": [
     "https://linux.do/t/*"
   ],

@@ -1,15 +1,13 @@
-name: Release Extension
+name: Check
 
 on:
+  pull_request:
   push:
-    tags:
-      - 'v*'
-
-permissions:
-  contents: write
+    branches:
+      - main
 
 jobs:
-  release:
+  static-check:
     runs-on: ubuntu-latest
 
     steps:
@@ -27,25 +25,12 @@ jobs:
       - name: Run static checks
         run: bash scripts/check.sh
 
-      - name: Build release artifacts
-        env:
-          TAG: ${{ github.ref_name }}
+      - name: Build smoke artifacts
         run: |
-          build_output=$(bash scripts/build-release-artifacts.sh "$TAG" "$PWD/dist")
+          build_output=$(bash scripts/build-release-artifacts.sh "v0.0.0-ci" "$PWD/dist")
           echo "$build_output"
           echo "$build_output" | grep '^CHROME_ZIP_PATH=' >> "$GITHUB_ENV"
           echo "$build_output" | grep '^FIREFOX_XPI_PATH=' >> "$GITHUB_ENV"
 
-      - name: Validate release artifacts
+      - name: Validate smoke artifacts
         run: bash scripts/check-release-artifacts.sh "${{ env.CHROME_ZIP_PATH }}" "${{ env.FIREFOX_XPI_PATH }}"
-
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          files: |
-            ${{ env.CHROME_ZIP_PATH }}
-            ${{ env.FIREFOX_XPI_PATH }}
-          generate_release_notes: true
-          make_latest: true
