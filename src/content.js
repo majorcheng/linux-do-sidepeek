@@ -46,6 +46,21 @@
     ".user-main .item"
   ].join(", ");
   const MAIN_CONTENT_SELECTOR = "#main-outlet";
+  const TOPIC_TRACKER_SELECTOR = [
+    "#list-area .show-more.has-topics",
+    ".contents > .show-more.has-topics"
+  ].join(", ");
+  // 选择器列表不能直接拼 `${TOPIC_TRACKER_SELECTOR} ...`，否则只会给最后一段补后缀。
+  const TOPIC_TRACKER_CLICKABLE_SELECTOR = TOPIC_TRACKER_SELECTOR
+    .split(",")
+    .map((selector) => `${selector.trim()} .alert.clickable`)
+    .join(", ");
+  const TOPIC_TRACKER_VERTICAL_SELECTOR = [
+    ".list-controls .navigation-container",
+    ".navigation-container",
+    ".list-controls",
+    "#navigation-bar"
+  ].join(", ");
   const EXCLUDED_LINK_CONTEXT_SELECTOR = [
     ".cooked",
     ".topic-post",
@@ -115,7 +130,11 @@
     isReplySubmitting: false,
     loadMoreError: "",
     loadMoreStatus: null,
-    hasShownPreviewNotice: false
+    hasShownPreviewNotice: false,
+    topicTrackerSyncQueued: false,
+    topicTrackerRefreshTimer: 0,
+    topicTrackerRefreshStartedAt: 0,
+    topicTrackerRefreshLoadingObserved: false
   };
 
   function init() {
@@ -291,6 +310,7 @@
     document.addEventListener("pointerup", stopDrawerResize, true);
     document.addEventListener("pointercancel", stopDrawerResize, true);
     window.addEventListener("resize", handleWindowResize, true);
+    window.addEventListener("scroll", handleWindowScroll, { capture: true, passive: true });
   }
 
   function handleDocumentClick(event) {
@@ -323,6 +343,10 @@
       event.preventDefault();
       event.stopPropagation();
       closeDrawer();
+      return;
+    }
+
+    if (handleTopicTrackerClick(target)) {
       return;
     }
 
@@ -485,6 +509,7 @@
     setIframeModeEnabled(state.settings.previewMode === "iframe");
     applyDrawerMode();
     updateSettingsPopoverPosition();
+    scheduleTopicTrackerPositionSync();
 
     loadTopic(topicUrl, fallbackTitle, topicIdHint);
   }
@@ -523,6 +548,122 @@
     clearHighlight();
     setSettingsPanelOpen(false);
     syncNavigationState();
+    scheduleTopicTrackerPositionSync();
+  }
+
+  function handleTopicTrackerClick(target) {
+    const clickable = getTopicTrackerClickable(target);
+    if (!clickable) {
+      return false;
+    }
+
+    armTopicTrackerRefreshSync();
+    return true;
+  }
+
+  function getTopicTrackerClickable(target = document) {
+    if (!(target instanceof Element) && !(target instanceof Document)) {
+      return null;
+    }
+
+    const clickable = target instanceof Document
+      ? target.querySelector(TOPIC_TRACKER_CLICKABLE_SELECTOR)
+      : target.closest(TOPIC_TRACKER_CLICKABLE_SELECTOR);
+
+    if (!(clickable instanceof Element)) {
+      return null;
+    }
+
+    return clickable;
+  }
+
+  function getTopicTrackerAlignmentTarget() {
+    return document.querySelector(TOPIC_TRACKER_VERTICAL_SELECTOR)
+      || document.querySelector(".list-controls")
+      || document.querySelector(MAIN_CONTENT_SELECTOR);
+  }
+
+  function armTopicTrackerRefreshSync() {
+    clearTopicTrackerRefreshSync();
+    state.topicTrackerRefreshStartedAt = Date.now();
+    state.topicTrackerRefreshLoadingObserved = isTopicTrackerLoading();
+    scrollDiscoveryContentToTop();
+    scheduleTopicTrackerPositionSync();
+    runTopicTrackerRefreshSync();
+  }
+
+  function runTopicTrackerRefreshSync() {
+    if (state.topicTrackerRefreshTimer) {
+      clearTimeout(state.topicTrackerRefreshTimer);
+    }
+
+    scrollDiscoveryContentToTop();
+
+    const loading = isTopicTrackerLoading();
+    const trackerVisible = Boolean(getTopicTrackerClickable());
+
+    if (loading) {
+      state.topicTrackerRefreshLoadingObserved = true;
+    }
+
+    const refreshFinished =
+      state.topicTrackerRefreshLoadingObserved && !loading;
+    const timeoutReached =
+      Date.now() - state.topicTrackerRefreshStartedAt > 2500;
+
+    if (refreshFinished || !trackerVisible || timeoutReached) {
+      scrollDiscoveryContentToTop();
+      requestAnimationFrame(() => scrollDiscoveryContentToTop());
+      window.setTimeout(() => scrollDiscoveryContentToTop(), 80);
+      clearTopicTrackerRefreshSync();
+      return;
+    }
+
+    state.topicTrackerRefreshTimer = window.setTimeout(
+      runTopicTrackerRefreshSync,
+      loading ? 80 : 140
+    );
+  }
+
+  function clearTopicTrackerRefreshSync() {
+    if (state.topicTrackerRefreshTimer) {
+      clearTimeout(state.topicTrackerRefreshTimer);
+      state.topicTrackerRefreshTimer = 0;
+    }
+
+    state.topicTrackerRefreshStartedAt = 0;
+    state.topicTrackerRefreshLoadingObserved = false;
+  }
+
+  function isTopicTrackerLoading() {
+    return Boolean(getTopicTrackerClickable()?.classList.contains("loading"));
+  }
+
+  function scrollDiscoveryContentToTop() {
+    const scrollingElement = document.scrollingElement || document.documentElement;
+    const scrollTop = 0;
+    const html = document.documentElement;
+    const body = document.body;
+    const previousHtmlBehavior = html.style.scrollBehavior;
+    const previousBodyBehavior = body.style.scrollBehavior;
+
+    html.style.scrollBehavior = "auto";
+    body.style.scrollBehavior = "auto";
+    window.scrollTo(0, scrollTop);
+    scrollingElement.scrollTop = scrollTop;
+    html.scrollTop = scrollTop;
+    body.scrollTop = scrollTop;
+    requestAnimationFrame(() => {
+      window.scrollTo(0, scrollTop);
+      scrollingElement.scrollTop = scrollTop;
+      html.scrollTop = scrollTop;
+      body.scrollTop = scrollTop;
+    });
+
+    requestAnimationFrame(() => {
+      html.style.scrollBehavior = previousHtmlBehavior;
+      body.style.scrollBehavior = previousBodyBehavior;
+    });
   }
 
   function highlightLink(link) {
@@ -757,6 +898,7 @@
 
     const visiblePosts = viewModel.posts;
     const basePosts = topic?.post_stream?.posts || [];
+    const topicOwner = getTopicOwnerIdentity(topic);
 
     if (!state.hasShownPreviewNotice) {
       const notice = document.createElement("div");
@@ -791,7 +933,7 @@
     postList.className = "ld-topic-post-list";
 
     for (const post of visiblePosts) {
-      postList.appendChild(buildPostCard(post));
+      postList.appendChild(buildPostCard(post, topicOwner));
     }
 
     wrapper.appendChild(postList);
@@ -910,7 +1052,7 @@
     return tag.name || tag.id || tag.text || tag.label || "";
   }
 
-  function buildPostCard(post) {
+  function buildPostCard(post, topicOwner = null) {
     const article = document.createElement("article");
     article.className = "ld-post-card";
     if (typeof post.post_number === "number") {
@@ -940,6 +1082,11 @@
     username.textContent = post.username ? `@${post.username}` : "";
 
     authorRow.append(displayName, username);
+
+    const topicOwnerBadge = buildTopicOwnerBadge(post, topicOwner);
+    if (topicOwnerBadge) {
+      authorRow.appendChild(topicOwnerBadge);
+    }
 
     const meta = document.createElement("div");
     meta.className = "ld-post-meta";
@@ -2117,11 +2264,63 @@
     return new URL(template.replace("{size}", "96"), location.origin).toString();
   }
 
+  function normalizeUsername(value) {
+    return typeof value === "string" ? value.trim().toLowerCase() : "";
+  }
+
+  function getTopicOwnerIdentity(topic) {
+    const createdBy = topic?.created_by && typeof topic.created_by === "object"
+      ? topic.created_by
+      : (topic?.details?.created_by && typeof topic.details.created_by === "object" ? topic.details.created_by : null);
+
+    if (!createdBy) {
+      return null;
+    }
+
+    const displayUsername = typeof createdBy.username === "string" ? createdBy.username.trim() : "";
+    const normalizedUsername = normalizeUsername(createdBy.username);
+    const userId = Number.isFinite(createdBy.id) ? Number(createdBy.id) : null;
+
+    if (!displayUsername && userId === null) {
+      return null;
+    }
+
+    return { displayUsername, normalizedUsername, userId };
+  }
+
+  function isTopicOwnerPost(post, topicOwner) {
+    if (!post || typeof post !== "object" || !topicOwner) {
+      return false;
+    }
+
+    const postUserId = Number.isFinite(post.user_id) ? Number(post.user_id) : null;
+    if (topicOwner.userId !== null && postUserId !== null && topicOwner.userId === postUserId) {
+      return true;
+    }
+
+    const postUsername = normalizeUsername(post.username);
+    return Boolean(topicOwner.normalizedUsername && postUsername && topicOwner.normalizedUsername === postUsername);
+  }
+
+  function buildTopicOwnerBadge(post, topicOwner) {
+    if (!isTopicOwnerPost(post, topicOwner)) {
+      return null;
+    }
+
+    const badge = document.createElement("span");
+    badge.className = "ld-post-topic-owner-badge";
+    badge.textContent = "Topic Owner";
+    badge.title = "楼主";
+    badge.setAttribute("aria-label", "楼主");
+    return badge;
+  }
+
   function buildTopicMeta(topic, loadedPostCount) {
     const parts = [];
 
-    if (topic.created_by?.username) {
-      parts.push(`楼主 @${topic.created_by.username}`);
+    const topicOwner = getTopicOwnerIdentity(topic);
+    if (topicOwner?.displayUsername) {
+      parts.push(`楼主 @${topicOwner.displayUsername}`);
     }
 
     if (topic.created_at) {
@@ -2345,6 +2544,7 @@
     );
 
     updateSettingsPopoverPosition();
+    scheduleTopicTrackerPositionSync();
   }
 
   function applyDrawerMode() {
@@ -2414,6 +2614,74 @@
     state.root.style.setProperty("--ld-settings-top", `${state.header.offsetHeight + 8}px`);
   }
 
+  function scheduleTopicTrackerPositionSync() {
+    if (state.topicTrackerSyncQueued) {
+      return;
+    }
+
+    state.topicTrackerSyncQueued = true;
+    requestAnimationFrame(() => {
+      state.topicTrackerSyncQueued = false;
+      syncTopicTrackerPosition();
+    });
+  }
+
+  function syncTopicTrackerPosition() {
+    const tracker = document.querySelector(TOPIC_TRACKER_SELECTOR);
+    const rootStyle = document.documentElement.style;
+
+    if (!tracker) {
+      rootStyle.removeProperty("--ld-topic-tracker-left");
+      rootStyle.removeProperty("--ld-topic-tracker-top");
+      rootStyle.removeProperty("--ld-topic-tracker-max-width");
+      return;
+    }
+
+    const anchor = tracker.closest("#list-area")
+      || document.querySelector("#list-area")
+      || tracker.closest(".contents")
+      || document.querySelector(MAIN_CONTENT_SELECTOR);
+    const alignmentTarget = getTopicTrackerAlignmentTarget() || anchor;
+
+    const anchorRect = anchor?.getBoundingClientRect();
+    if (!anchorRect || anchorRect.width <= 0) {
+      return;
+    }
+
+    const sidePadding = 16;
+    const centerX = Math.min(
+      window.innerWidth - sidePadding,
+      Math.max(sidePadding, Math.round(anchorRect.left + anchorRect.width / 2))
+    );
+    const header = document.querySelector(".d-header-wrap")
+      || document.querySelector(".d-header")
+      || document.querySelector("header");
+    const headerBottom = header?.getBoundingClientRect()?.bottom;
+    const alignmentRect = alignmentTarget?.getBoundingClientRect();
+    const alignmentBottom = alignmentRect?.bottom;
+    const trackerHeight = Math.round(tracker.getBoundingClientRect().height || 36);
+    const topBase = Math.round(
+      Math.max(
+        (Number.isFinite(headerBottom) ? headerBottom : 64) + 18,
+        (Number.isFinite(alignmentBottom) ? alignmentBottom : 0) + 10
+      )
+    );
+    const top = Math.max(
+      Math.round((Number.isFinite(headerBottom) ? headerBottom : 64) + 8),
+      topBase - trackerHeight - Math.round(trackerHeight * 0.35)
+    );
+    const maxWidth = Math.max(
+      220,
+      Math.min(window.innerWidth - sidePadding * 2, anchorRect.width - 24)
+    );
+
+    // 让“查看 xx 个新的或更新的话题”固定在中间栏顶部区域，
+    // 水平居中、垂直位于滚动区上方的固定控制区域。
+    rootStyle.setProperty("--ld-topic-tracker-left", `${centerX}px`);
+    rootStyle.setProperty("--ld-topic-tracker-top", `${top}px`);
+    rootStyle.setProperty("--ld-topic-tracker-max-width", `${Math.round(maxWidth)}px`);
+  }
+
   function handleWindowResize() {
     if (state.settings.drawerWidth === "custom") {
       state.settings.drawerWidthCustom = clampDrawerWidth(state.settings.drawerWidthCustom);
@@ -2422,6 +2690,16 @@
     } else {
       updateSettingsPopoverPosition();
     }
+
+    scheduleTopicTrackerPositionSync();
+  }
+
+  function handleWindowScroll() {
+    if (!document.querySelector(TOPIC_TRACKER_SELECTOR)) {
+      return;
+    }
+
+    scheduleTopicTrackerPositionSync();
   }
 
   function watchLocationChanges() {
@@ -2456,6 +2734,8 @@
     };
 
     const observer = new MutationObserver(() => {
+      scheduleTopicTrackerPositionSync();
+
       if (location.href !== state.lastLocation) {
         handleLocationChange();
       } else if (state.currentUrl) {
@@ -2475,6 +2755,8 @@
 
   function handleLocationChange() {
     state.lastLocation = location.href;
+    clearTopicTrackerRefreshSync();
+    scheduleTopicTrackerPositionSync();
 
     if (!hasPreviewableTopicLinks()) {
       closeDrawer();

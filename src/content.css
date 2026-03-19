@@ -1,6 +1,9 @@
 :root {
   --ld-drawer-width: clamp(360px, 42vw, 920px);
   --ld-image-preview-scale: 1;
+  --ld-topic-tracker-left: 50vw;
+  --ld-topic-tracker-top: 112px;
+  --ld-topic-tracker-max-width: min(720px, calc(100vw - 32px));
 }
 
 body.ld-drawer-page-open {
@@ -570,6 +573,19 @@ body.ld-drawer-page-open #ld-drawer-root {
   gap: 8px;
 }
 
+#ld-drawer-root .ld-post-topic-owner-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tertiary, #3b82f6) 12%, transparent);
+  color: var(--tertiary, #3b82f6);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
 #ld-drawer-root .ld-post-username,
 #ld-drawer-root .ld-post-meta {
   color: var(--primary-medium, rgba(15, 23, 42, 0.64));
@@ -745,6 +761,28 @@ body.ld-drawer-page-open #ld-drawer-root {
 
   to {
     opacity: 1;
+  }
+}
+
+/* 固定 Discourse 的“查看 xx 个新的或更新的话题”提示条，避免它随列表滚走。 */
+@media (min-width: 768px) {
+  #list-area .show-more.has-topics,
+  .contents > .show-more.has-topics {
+    position: fixed !important;
+    top: var(--ld-topic-tracker-top) !important;
+    left: var(--ld-topic-tracker-left) !important;
+    right: auto !important;
+    margin: 0 !important;
+    width: fit-content !important;
+    max-width: var(--ld-topic-tracker-max-width) !important;
+    translate: -50% 0 !important;
+    z-index: 1001 !important;
+  }
+
+  #list-area .show-more.has-topics .alert,
+  .contents > .show-more.has-topics .alert {
+    max-width: 100%;
+    box-shadow: 0 10px 26px rgba(15, 23, 42, 0.16);
   }
 }
 
