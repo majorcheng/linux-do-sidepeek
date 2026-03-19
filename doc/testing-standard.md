@@ -92,6 +92,7 @@ bash scripts/agent-smoke.sh --cdp-port 9222
 6. `AGENT-CHROME-006`
 7. `AGENT-CHROME-008`
 8. `AGENT-CHROME-009`
+9. `AGENT-CHROME-010`
 
 说明：
 
@@ -103,6 +104,11 @@ bash scripts/agent-smoke.sh --cdp-port 9222
 1. 高风险交互改动至少跑相关的 2 到 3 条 agent 用例
 2. 如果修的是线上回归，必须补对应回归用例
 3. agent 用例只记录稳定断言，不记录“看起来差不多”
+
+合并前规则：
+
+1. 如果 PR 新增或改动了可稳定断言的交互路径，必须先在提交分支补对应 agent smoke 用例
+2. 新增用例和受影响的既有用例必须先在提交分支跑过，再合并到 `main`
 
 用例定义见 [agent-smoke-cases.md](/mnt/hdd/work/temp/linux.do_improvement/doc/agent-smoke-cases.md)。
 
