@@ -131,6 +131,7 @@ bash scripts/agent-smoke.sh --cdp-port 9222
 补充规则：
 - 修复用户已发现的 bug 时，更新 `doc/agent-smoke-cases.md` 中对应回归用例
 - 优先把稳定断言写入 agent 用例库，再考虑升级成真正脚本化测试
+- PR 合并前，如果新增或改动了可稳定断言的交互路径，先在提交分支补对应 agent smoke 用例并跑过，再合并到 `main`
 
 ## 架构摘要
 - `manifest.json`：声明 MV3 扩展信息、匹配站点与 content script 注入配置
