@@ -327,10 +327,6 @@
       return;
     }
 
-    if (handleTopicTrackerClick(target)) {
-      return;
-    }
-
     if (!state.settingsPanel?.hidden && !target.closest(".ld-drawer-settings-card") && !target.closest(".ld-drawer-settings-toggle")) {
       setSettingsPanelOpen(false);
     }
@@ -347,6 +343,10 @@
       event.preventDefault();
       event.stopPropagation();
       closeDrawer();
+      return;
+    }
+
+    if (handleTopicTrackerClick(target)) {
       return;
     }
 
