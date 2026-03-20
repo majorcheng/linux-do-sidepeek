@@ -737,6 +737,147 @@ run_010() {
   fi
 }
 
+drawer_body_state() {
+  local script
+  script=$(cat <<'EOF'
+(() => {
+  const body = document.querySelector("#ld-drawer-root .ld-drawer-body");
+  if (!(body instanceof HTMLElement)) {
+    return { ok: false, reason: "drawer-body-not-found" };
+  }
+
+  const rect = body.getBoundingClientRect();
+  return {
+    ok: true,
+    bodyTop: Math.round(body.scrollTop),
+    maxScrollTop: Math.round(body.scrollHeight - body.clientHeight),
+    clientHeight: Math.round(body.clientHeight),
+    centerX: Math.round(rect.left + rect.width / 2),
+    centerY: Math.round(rect.top + Math.min(rect.height / 2, 300))
+  };
+})()
+EOF
+)
+  ab_eval "$script"
+}
+
+page_scroll_state() {
+  local script
+  script=$(cat <<'EOF'
+(() => ({
+  docTop: Math.round(document.scrollingElement?.scrollTop || 0),
+  pageOpen: document.body.classList.contains("ld-drawer-page-open"),
+  overlay: document.body.classList.contains("ld-drawer-mode-overlay"),
+  title: document.querySelector("#ld-drawer-root .ld-drawer-title")?.textContent?.trim() || null
+}))()
+EOF
+)
+  ab_eval "$script"
+}
+
+set_page_scroll_top() {
+  local top=$1
+  local top_json script
+  top_json=$(printf '%s' "$top" | jq -Rs 'tonumber')
+  script=$(cat <<EOF
+(() => {
+  const top = $top_json;
+  window.scrollTo(0, top);
+  return {
+    docTop: Math.round(document.scrollingElement?.scrollTop || 0),
+    windowY: Math.round(window.scrollY)
+  };
+})()
+EOF
+)
+  ab_eval "$script"
+}
+
+prepare_scrollable_drawer_topic() {
+  local index=0
+  local open_result body_state
+
+  while [ "$index" -lt 5 ]; do
+    open_result=$(open_topic_by_index "$index") || {
+      index=$((index + 1))
+      continue
+    }
+    ensure_settings_closed
+    body_state=$(drawer_body_state)
+
+    if [ "$(echo "$body_state" | jq -r '.ok')" = "true" ] \
+      && [ "$(echo "$body_state" | jq -r '.maxScrollTop')" -ge 1200 ]; then
+      echo "$open_result"
+      return 0
+    fi
+
+    index=$((index + 1))
+  done
+
+  return 1
+}
+
+run_013() {
+  local case_id="AGENT-CHROME-013"
+  local open_result overlay_result scroll_result body_state before after
+  local center_x center_y before_doc_top after_doc_top
+
+  open_result=$(prepare_scrollable_drawer_topic) || {
+    record_fail "$case_id" "前 5 个列表主题里没有足够长、可滚动的抽屉内容"
+    return 0
+  }
+
+  overlay_result=$(set_overlay_mode)
+  if [ "$(echo "$overlay_result" | jq -r '.ok')" != "true" ]; then
+    record_fail "$case_id" "无法切到浮层模式"
+    return 0
+  fi
+
+  ensure_settings_closed
+  scroll_result=$(set_page_scroll_top 900)
+  body_state=$(ab_eval '(() => {
+    const body = document.querySelector("#ld-drawer-root .ld-drawer-body");
+    if (!(body instanceof HTMLElement)) {
+      return { ok: false, reason: "drawer-body-not-found" };
+    }
+
+    body.scrollTop = body.scrollHeight;
+    const rect = body.getBoundingClientRect();
+    return {
+      ok: true,
+      bodyTop: Math.round(body.scrollTop),
+      maxScrollTop: Math.round(body.scrollHeight - body.clientHeight),
+      centerX: Math.round(rect.left + rect.width / 2),
+      centerY: Math.round(rect.top + Math.min(rect.height / 2, 300))
+    };
+  })()')
+
+  if [ "$(echo "$body_state" | jq -r '.ok')" != "true" ]; then
+    record_fail "$case_id" "无法读取抽屉滚动容器"
+    return 0
+  fi
+
+  center_x=$(echo "$body_state" | jq -r '.centerX')
+  center_y=$(echo "$body_state" | jq -r '.centerY')
+  ab mouse move "$center_x" "$center_y" >/dev/null
+  before=$(page_scroll_state)
+  ab mouse wheel 1200 >/dev/null
+  ab wait 300 >/dev/null
+  after=$(page_scroll_state)
+  before_doc_top=$(echo "$before" | jq -r '.docTop')
+  after_doc_top=$(echo "$after" | jq -r '.docTop')
+
+  if [ "$(echo "$scroll_result" | jq -r '.docTop')" -ge 800 ] \
+    && [ "$before_doc_top" -ge 800 ] \
+    && [ "$after_doc_top" = "$before_doc_top" ] \
+    && [ "$(echo "$after" | jq -r '.pageOpen')" = "true" ] \
+    && [ "$(echo "$after" | jq -r '.overlay')" = "true" ]; then
+    record_pass "$case_id" "title=$(echo "$after" | jq -r '.title // empty') docTop=$after_doc_top"
+  else
+    record_fail "$case_id" "scroll=$(echo "$scroll_result" | jq -c '.') body=$(echo "$body_state" | jq -c '{bodyTop, maxScrollTop, centerX, centerY}') before=$(echo "$before" | jq -c '{docTop, pageOpen, overlay, title}') after=$(echo "$after" | jq -c '{docTop, pageOpen, overlay, title}')"
+  fi
+}
+
 run_case() {
   local case_id=$1
   case "$case_id" in
@@ -749,6 +890,7 @@ run_case() {
     AGENT-CHROME-008) run_008 ;;
     AGENT-CHROME-009) run_009 ;;
     AGENT-CHROME-010) run_010 ;;
+    AGENT-CHROME-013) run_013 ;;
     *)
       record_fail "$case_id" "未知用例 ID"
       ;;

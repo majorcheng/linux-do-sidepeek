@@ -358,6 +358,8 @@ body.ld-drawer-page-open #ld-drawer-root {
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--tertiary, #3b82f6) 40%, transparent) transparent;
 }
 
 #ld-drawer-root .ld-drawer-body::-webkit-scrollbar {

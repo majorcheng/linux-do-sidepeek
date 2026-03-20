@@ -151,6 +151,8 @@ bash scripts/agent-smoke.sh --cdp-port 9222
 
 1. `AGENT-CHROME-006`
    浮层模式下，抽屉打开时点击另一个列表主题，应直接切换抽屉内容，不能先关闭再第二次打开
+2. `AGENT-CHROME-013`
+   抽屉内容滚到底后继续滚轮时，外层列表页不应继续跟着滚动
 
 ## 4. PR 证据格式
 
