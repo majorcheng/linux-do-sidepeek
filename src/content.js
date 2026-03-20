@@ -18,6 +18,7 @@
     postMode: "all",
     authorFilter: "all",
     replyOrder: "default",
+    floatingReplyButton: "off",
     drawerWidth: "medium",
     drawerWidthCustom: 720,
     drawerMode: "push"
@@ -89,7 +90,8 @@
     meta: null,
     drawerBody: null,
     content: null,
-    replyButton: null,
+    replyToggleButton: null,
+    replyFabButton: null,
     replyPanel: null,
     replyPanelTitle: null,
     replyTextarea: null,
@@ -172,6 +174,7 @@
               <button class="ld-drawer-nav" type="button" data-nav="next">下一帖</button>
               <button class="ld-drawer-settings-toggle" type="button" aria-expanded="false" aria-controls="ld-drawer-settings">选项</button>
               <button class="ld-drawer-refresh" type="button" aria-label="刷新最新回复" title="刷新最新回复" hidden>刷新</button>
+              <button class="ld-drawer-reply-toggle ld-drawer-reply-trigger" type="button" aria-expanded="false" aria-controls="ld-drawer-reply-panel" aria-label="回复当前主题" title="回复当前主题" hidden>回复主题</button>
               <a class="ld-drawer-link" href="https://linux.do/latest" target="_blank" rel="noopener noreferrer">新标签打开</a>
               <button class="ld-drawer-close" type="button" aria-label="关闭抽屉">关闭</button>
             </div>
@@ -214,6 +217,14 @@
               <span class="ld-setting-hint">长帖下会优先显示最新一批回复，不代表把整帖一次性完整倒序</span>
             </label>
             <label class="ld-setting-field">
+              <span class="ld-setting-label">悬浮回复入口</span>
+              <select class="ld-setting-control" data-setting="floatingReplyButton">
+                <option value="off">关闭</option>
+                <option value="on">开启</option>
+              </select>
+              <span class="ld-setting-hint">关闭后只保留头部的“回复主题”，开启后额外显示右侧悬浮快捷入口</span>
+            </label>
+            <label class="ld-setting-field">
               <span class="ld-setting-label">抽屉模式</span>
               <select class="ld-setting-control" data-setting="drawerMode">
                 <option value="push">挤压模式</option>
@@ -237,7 +248,7 @@
         <div class="ld-drawer-body">
           <div class="ld-drawer-content"></div>
         </div>
-        <button class="ld-drawer-reply-fab" type="button" aria-expanded="false" aria-controls="ld-drawer-reply-panel" aria-label="回复这个主题" title="回复这个主题">
+        <button class="ld-drawer-reply-fab ld-drawer-reply-trigger" type="button" aria-expanded="false" aria-controls="ld-drawer-reply-panel" aria-label="回复当前主题" title="回复当前主题">
           <span class="ld-drawer-reply-fab-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false">
               <path d="M4 12.5c0-4.14 3.36-7.5 7.5-7.5h7a1.5 1.5 0 0 1 0 3h-7A4.5 4.5 0 0 0 7 12.5v1.38l1.44-1.44a1.5 1.5 0 0 1 2.12 2.12l-4 4a1.5 1.5 0 0 1-2.12 0l-4-4a1.5 1.5 0 1 1 2.12-2.12L4 13.88V12.5Z" fill="currentColor"></path>
@@ -274,7 +285,8 @@
     state.meta = root.querySelector(".ld-drawer-meta");
     state.drawerBody = root.querySelector(".ld-drawer-body");
     state.content = root.querySelector(".ld-drawer-content");
-    state.replyButton = root.querySelector(".ld-drawer-reply-fab");
+    state.replyToggleButton = root.querySelector(".ld-drawer-reply-toggle");
+    state.replyFabButton = root.querySelector(".ld-drawer-reply-fab");
     state.replyPanel = root.querySelector(".ld-drawer-reply-panel");
     state.replyPanelTitle = root.querySelector(".ld-reply-panel-title");
     state.replyTextarea = root.querySelector(".ld-reply-textarea");
@@ -299,7 +311,8 @@
     state.nextButton.addEventListener("click", () => navigateTopic(1));
     state.settingsToggle.addEventListener("click", toggleSettingsPanel);
     state.latestRepliesRefreshButton.addEventListener("click", handleLatestRepliesRefresh);
-    state.replyButton.addEventListener("click", toggleReplyPanel);
+    state.replyToggleButton.addEventListener("click", toggleReplyPanel);
+    state.replyFabButton.addEventListener("click", toggleReplyPanel);
     state.replyCancelButton.addEventListener("click", () => setReplyPanelOpen(false));
     state.replySubmitButton.addEventListener("click", handleReplySubmit);
     root.querySelector(".ld-reply-panel-close").addEventListener("click", () => setReplyPanelOpen(false));
@@ -349,7 +362,7 @@
       setSettingsPanelOpen(false);
     }
 
-    if (!state.replyPanel?.hidden && !target.closest(".ld-drawer-reply-panel") && !target.closest(".ld-drawer-reply-fab")) {
+    if (!state.replyPanel?.hidden && !target.closest(".ld-drawer-reply-panel") && !target.closest(".ld-drawer-reply-trigger")) {
       setReplyPanelOpen(false);
     }
 
@@ -1461,8 +1474,16 @@
     setReplyPanelOpen(true);
   }
 
+  function forEachReplyTriggerButton(callback) {
+    for (const button of [state.replyToggleButton, state.replyFabButton]) {
+      if (button instanceof HTMLButtonElement) {
+        callback(button);
+      }
+    }
+  }
+
   function setReplyPanelOpen(isOpen) {
-    if (!state.replyPanel || !state.replyButton) {
+    if (!state.replyPanel) {
       return;
     }
 
@@ -1471,7 +1492,9 @@
     }
 
     state.replyPanel.hidden = !isOpen;
-    state.replyButton.setAttribute("aria-expanded", String(isOpen));
+    forEachReplyTriggerButton((button) => {
+      button.setAttribute("aria-expanded", String(isOpen));
+    });
 
     if (!isOpen) {
       setReplyTarget(null);
@@ -2960,6 +2983,10 @@
         settings.authorFilter = DEFAULT_SETTINGS.authorFilter;
       }
 
+      if (settings.floatingReplyButton !== "off" && settings.floatingReplyButton !== "on") {
+        settings.floatingReplyButton = DEFAULT_SETTINGS.floatingReplyButton;
+      }
+
       settings.drawerWidthCustom = clampDrawerWidth(settings.drawerWidthCustom);
       return settings;
     } catch {
@@ -2989,13 +3016,23 @@
   function syncReplyUI() {
     const hasTopic = Boolean(state.currentTopic?.id);
     const isTargetedReply = Number.isFinite(state.replyTargetPostNumber);
-
+    const hasCurrentUrl = Boolean(state.currentUrl);
     const isIframeMode = state.root?.classList.contains(IFRAME_MODE_CLASS);
+    const isSettingsOpen = !state.settingsPanel?.hidden;
 
-    if (state.replyButton) {
-      state.replyButton.hidden = !Boolean(state.currentUrl) || isIframeMode;
-      state.replyButton.disabled = !hasTopic || state.isReplySubmitting;
-      state.replyButton.classList.toggle("is-disabled", !hasTopic || state.isReplySubmitting);
+    if (state.replyToggleButton) {
+      state.replyToggleButton.hidden = !hasCurrentUrl || isIframeMode;
+      state.replyToggleButton.disabled = !hasTopic || state.isReplySubmitting;
+      state.replyToggleButton.classList.toggle("is-disabled", !hasTopic || state.isReplySubmitting);
+    }
+
+    if (state.replyFabButton) {
+      state.replyFabButton.hidden = !hasCurrentUrl
+        || isIframeMode
+        || isSettingsOpen
+        || state.settings.floatingReplyButton !== "on";
+      state.replyFabButton.disabled = !hasTopic || state.isReplySubmitting;
+      state.replyFabButton.classList.toggle("is-disabled", !hasTopic || state.isReplySubmitting);
     }
 
     if (state.replyTextarea) {
@@ -3052,12 +3089,14 @@
     }
 
     if (isOpen) {
+      setReplyPanelOpen(false);
       updateSettingsPopoverPosition();
       queueMicrotask(() => state.settingsCard?.querySelector(".ld-setting-control")?.focus());
     }
 
     state.settingsPanel.hidden = !isOpen;
     state.settingsToggle.setAttribute("aria-expanded", String(isOpen));
+    syncReplyUI();
   }
 
   function handleSettingsChange(event) {
@@ -3087,6 +3126,12 @@
       return;
     }
 
+    if (key === "floatingReplyButton") {
+      syncReplyUI();
+      setSettingsPanelOpen(false);
+      return;
+    }
+
     refreshCurrentView();
     setSettingsPanelOpen(false);
   }
@@ -3097,6 +3142,7 @@
     saveSettings();
     applyDrawerWidth();
     applyDrawerMode();
+    syncReplyUI();
     refreshCurrentView();
     setSettingsPanelOpen(false);
   }
@@ -3179,7 +3225,9 @@
       return;
     }
 
-    state.root.style.setProperty("--ld-settings-top", `${state.header.offsetHeight + 8}px`);
+    const offset = `${state.header.offsetHeight + 8}px`;
+    state.root.style.setProperty("--ld-settings-top", offset);
+    state.root.style.setProperty("--ld-reply-panel-top", offset);
   }
 
   function scheduleTopicTrackerPositionSync() {
