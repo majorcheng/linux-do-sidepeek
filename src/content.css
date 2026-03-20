@@ -351,6 +351,10 @@ body.ld-drawer-page-open #ld-drawer-root {
   gap: 6px;
 }
 
+#ld-drawer-root .ld-setting-field.is-disabled {
+  opacity: 0.58;
+}
+
 #ld-drawer-root .ld-setting-row {
   display: flex;
   align-items: center;
@@ -390,6 +394,10 @@ body.ld-drawer-page-open #ld-drawer-root {
   margin: 0;
   accent-color: var(--tertiary, #3b82f6);
   cursor: pointer;
+}
+
+#ld-drawer-root .ld-setting-field.is-disabled .ld-setting-range {
+  cursor: not-allowed;
 }
 
 #ld-drawer-root .ld-setting-range:focus-visible {

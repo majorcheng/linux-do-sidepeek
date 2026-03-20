@@ -109,7 +109,10 @@
     openInTab: null,
     settingsPanel: null,
     settingsCard: null,
+    postBodyFontSizeField: null,
+    postBodyFontSizeControl: null,
     postBodyFontSizeValue: null,
+    postBodyFontSizeHint: null,
     settingsCloseButton: null,
     settingsToggle: null,
     latestRepliesRefreshButton: null,
@@ -210,7 +213,7 @@
                 <option value="first">仅首帖</option>
               </select>
             </label>
-            <label class="ld-setting-field">
+            <label class="ld-setting-field" data-setting-group="postBodyFontSize">
               <div class="ld-setting-row">
                 <span class="ld-setting-label">正文字号</span>
                 <span class="ld-setting-value" data-setting-value="postBodyFontSize">15px</span>
@@ -223,7 +226,7 @@
                 step="1"
                 data-setting="postBodyFontSize"
               />
-              <span class="ld-setting-hint">只调整帖子正文和代码字号，不影响标题和按钮</span>
+              <span class="ld-setting-hint" data-setting-hint="postBodyFontSize">只调整帖子正文和代码字号，不影响标题和按钮</span>
             </label>
             <label class="ld-setting-field">
               <span class="ld-setting-label">作者过滤</span>
@@ -324,7 +327,10 @@
     state.openInTab = root.querySelector(".ld-drawer-link");
     state.settingsPanel = root.querySelector(".ld-drawer-settings");
     state.settingsCard = root.querySelector(".ld-drawer-settings-card");
+    state.postBodyFontSizeField = root.querySelector('[data-setting-group="postBodyFontSize"]');
+    state.postBodyFontSizeControl = root.querySelector('[data-setting="postBodyFontSize"]');
     state.postBodyFontSizeValue = root.querySelector('[data-setting-value="postBodyFontSize"]');
+    state.postBodyFontSizeHint = root.querySelector('[data-setting-hint="postBodyFontSize"]');
     state.settingsCloseButton = root.querySelector(".ld-settings-close");
     state.settingsToggle = root.querySelector(".ld-drawer-settings-toggle");
     state.latestRepliesRefreshButton = root.querySelector(".ld-drawer-refresh");
@@ -838,16 +844,15 @@
     state.isLoadingMorePosts = false;
     state.loadMoreError = "";
 
-    if (state.settings.previewMode === "iframe") {
-      if (!state.currentViewTracked) {
-        ensureTrackedTopicVisit(topicUrl, topicIdHint).catch(() => {});
-      }
-      renderIframeFallback(topicUrl, fallbackTitle, null, true);
-      return;
-    }
-
     if (state.abortController) {
       state.abortController.abort();
+      state.abortController = null;
+    }
+
+    if (state.settings.previewMode === "iframe") {
+      renderIframeFallback(topicUrl, fallbackTitle, null, true);
+      syncLatestRepliesRefreshUI();
+      return;
     }
 
     if (!state.currentViewTracked) {
@@ -2337,17 +2342,15 @@
       if (state.abortController) {
         state.abortController.abort();
         state.abortController = null;
-        if (!state.currentViewTracked) {
-          state.currentTrackRequest = null;
-          state.currentTrackRequestKey = "";
-        }
       }
 
       if (!state.currentViewTracked) {
-        ensureTrackedTopicVisit(state.currentUrl, state.currentTopicIdHint).catch(() => {});
+        state.currentTrackRequest = null;
+        state.currentTrackRequestKey = "";
       }
 
       renderIframeFallback(state.currentUrl, state.currentFallbackTitle, null, true);
+      syncLatestRepliesRefreshUI();
       return;
     }
 
@@ -3532,11 +3535,31 @@
     }
 
     syncPostBodyFontSizeValue();
+    syncPostBodyFontSizeControlState();
   }
 
   function syncPostBodyFontSizeValue() {
     if (state.postBodyFontSizeValue) {
       state.postBodyFontSizeValue.textContent = `${clampPostBodyFontSize(state.settings.postBodyFontSize)}px`;
+    }
+  }
+
+  function syncPostBodyFontSizeControlState() {
+    const isSmartPreview = state.settings.previewMode === "smart";
+
+    if (state.postBodyFontSizeField) {
+      state.postBodyFontSizeField.classList.toggle("is-disabled", !isSmartPreview);
+      state.postBodyFontSizeField.setAttribute("aria-disabled", String(!isSmartPreview));
+    }
+
+    if (state.postBodyFontSizeControl) {
+      state.postBodyFontSizeControl.disabled = !isSmartPreview;
+    }
+
+    if (state.postBodyFontSizeHint) {
+      state.postBodyFontSizeHint.textContent = isSmartPreview
+        ? "只调整帖子正文和代码字号，不影响标题和按钮"
+        : "仅智能预览可用；当前整页模式下不会改变 iframe 里的字号。";
     }
   }
 
@@ -3557,6 +3580,7 @@
 
     if (isOpen) {
       setReplyPanelOpen(false);
+      syncSettingsUI();
       updateSettingsPopoverPosition();
       queueMicrotask(() => state.settingsCard?.querySelector(".ld-setting-control")?.focus());
     }

@@ -22,6 +22,7 @@ ALL_CASES=(
   "AGENT-CHROME-014"
   "AGENT-CHROME-015"
   "AGENT-CHROME-016"
+  "AGENT-CHROME-017"
 )
 
 CASES=("${DEFAULT_CASES[@]}")
@@ -643,8 +644,10 @@ post_body_font_state() {
   script=$(cat <<'EOF'
 (() => {
   const body = document.querySelector("#ld-drawer-root .ld-post-body");
+  const field = document.querySelector('#ld-drawer-settings [data-setting-group="postBodyFontSize"]');
   const control = document.querySelector('#ld-drawer-settings [data-setting="postBodyFontSize"]');
   const value = document.querySelector('#ld-drawer-settings [data-setting-value="postBodyFontSize"]');
+  const hint = document.querySelector('#ld-drawer-settings [data-setting-hint="postBodyFontSize"]');
   const code = document.querySelector("#ld-drawer-root .ld-post-body pre, #ld-drawer-root .ld-post-body code");
   return {
     pageOpen: document.body.classList.contains("ld-drawer-page-open"),
@@ -652,8 +655,12 @@ post_body_font_state() {
     bodyFontSize: body ? Math.round(parseFloat(getComputedStyle(body).fontSize) || 0) : null,
     codeExists: code instanceof HTMLElement,
     codeFontSize: code ? Math.round(parseFloat(getComputedStyle(code).fontSize) || 0) : null,
+    fieldDisabled: field?.classList.contains("is-disabled") || false,
+    fieldAriaDisabled: field?.getAttribute("aria-disabled") || null,
+    controlDisabled: control?.disabled || false,
     controlValue: control?.value || null,
-    valueText: value?.textContent?.trim() || null
+    valueText: value?.textContent?.trim() || null,
+    hintText: hint?.textContent?.trim() || null
   };
 })()
 EOF
@@ -1356,6 +1363,47 @@ run_016() {
   fi
 }
 
+run_017() {
+  local case_id="AGENT-CHROME-017"
+  local original_settings original_preview preview_result state
+
+  open_topic_by_index 0 >/dev/null || {
+    record_fail "$case_id" "无法打开抽屉"
+    return 0
+  }
+
+  original_settings=$(settings_values)
+  original_preview=$(echo "$original_settings" | jq -r '.previewMode // empty')
+  if [ -z "$original_preview" ]; then
+    record_fail "$case_id" "无法读取当前预览模式"
+    return 0
+  fi
+
+  preview_result=$(set_setting_value previewMode iframe)
+  if [ "$(echo "$preview_result" | jq -r '.ok')" != "true" ]; then
+    record_fail "$case_id" "无法切到整页模式: $preview_result"
+    return 0
+  fi
+
+  ab wait 1200 >/dev/null
+  ensure_settings_open
+  state=$(post_body_font_state)
+
+  set_setting_value previewMode "$original_preview" >/dev/null || true
+  ab wait 200 >/dev/null
+  ensure_settings_closed
+
+  if [ "$(echo "$state" | jq -r '.pageOpen')" = "true" ] \
+    && [ "$(echo "$state" | jq -r '.fieldDisabled')" = "true" ] \
+    && [ "$(echo "$state" | jq -r '.fieldAriaDisabled // empty')" = "true" ] \
+    && [ "$(echo "$state" | jq -r '.controlDisabled')" = "true" ] \
+    && echo "$state" | jq -e '.hintText | test("仅智能预览可用")' >/dev/null; then
+    record_pass "$case_id" "state=$(echo "$state" | jq -c '{fieldDisabled, fieldAriaDisabled, controlDisabled, valueText, hintText}')"
+  else
+    record_fail "$case_id" "state=$(echo "$state" | jq -c '{pageOpen, fieldDisabled, fieldAriaDisabled, controlDisabled, controlValue, valueText, hintText}')"
+  fi
+}
+
 run_case() {
   local case_id=$1
   case "$case_id" in
@@ -1372,6 +1420,7 @@ run_case() {
     AGENT-CHROME-014) run_014 ;;
     AGENT-CHROME-015) run_015 ;;
     AGENT-CHROME-016) run_016 ;;
+    AGENT-CHROME-017) run_017 ;;
     *)
       record_fail "$case_id" "未知用例 ID"
       ;;
