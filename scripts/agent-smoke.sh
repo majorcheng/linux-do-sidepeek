@@ -16,6 +16,13 @@ DEFAULT_CASES=(
   "AGENT-CHROME-010"
 )
 
+ALL_CASES=(
+  "${DEFAULT_CASES[@]}"
+  "AGENT-CHROME-013"
+  "AGENT-CHROME-014"
+  "AGENT-CHROME-015"
+)
+
 CASES=("${DEFAULT_CASES[@]}")
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -34,7 +41,7 @@ EOF
 }
 
 list_cases() {
-  printf '%s\n' "${DEFAULT_CASES[@]}"
+  printf '%s\n' "${ALL_CASES[@]}"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -137,6 +144,7 @@ drawer_state() {
   const root = document.getElementById("ld-drawer-root");
   const settingsButton = root?.querySelector(".ld-drawer-settings-toggle");
   const settingsPanel = root?.querySelector("#ld-drawer-settings");
+  const replyButton = root?.querySelector(".ld-drawer-reply-toggle");
   const link = root?.querySelector(".ld-drawer-link");
   return {
     pageUrl: location.href,
@@ -148,6 +156,8 @@ drawer_state() {
     settingsText: settingsButton?.textContent?.trim() || null,
     settingsExpanded: settingsButton?.getAttribute("aria-expanded") || null,
     settingsHidden: settingsPanel?.hasAttribute("hidden") ?? null,
+    replyText: replyButton?.textContent?.trim() || null,
+    replyHidden: replyButton?.hidden ?? null,
     newTabText: link?.textContent?.trim() || null,
     newTabHref: link?.getAttribute("href") || null,
     newTabTarget: link?.getAttribute("target") || null,
@@ -161,23 +171,85 @@ EOF
 
 click_topic_link_by_index() {
   local index=$1
+  local mode=${2:-any}
   local script
   script=$(cat <<EOF
 (() => {
-  const candidates = Array.from(document.querySelectorAll("#list-area a.title[data-topic-id]")).filter((link) => {
-    const text = link.textContent?.trim();
-    return Boolean(text) && !link.closest("#ld-drawer-root");
-  });
+  const mode = $(printf '%s' "$mode" | jq -Rs .);
 
-  const link = candidates[$index];
-  if (!link) {
-    return { ok: false, reason: "topic-not-found", count: candidates.length };
+  function getTopicMeta(link) {
+    try {
+      const parsed = new URL(link.href, location.href);
+      const segments = parsed.pathname.replace(/\/+$/, "").split("/").filter(Boolean);
+      if (segments[0] !== "t") {
+        return { targeted: false, targetSegments: [] };
+      }
+
+      const first = segments[1] || "";
+      const second = segments[2] || "";
+      const firstIsNumber = /^\\d+$/.test(first);
+      const secondIsNumber = /^\\d+$/.test(second);
+      let extraSegments = [];
+
+      if (firstIsNumber) {
+        extraSegments = segments.slice(3).filter(Boolean);
+      } else if (secondIsNumber) {
+        extraSegments = segments.slice(4).filter(Boolean);
+      }
+
+      return {
+        targeted: extraSegments.length > 0,
+        targetSegments: extraSegments
+      };
+    } catch {
+      return { targeted: false, targetSegments: [] };
+    }
   }
 
-  const text = link.textContent.trim();
-  const href = link.href;
-  link.click();
-  return { ok: true, text, href, count: candidates.length };
+  const candidates = Array.from(document.querySelectorAll("#list-area a.title[data-topic-id]")).map((link) => {
+    const text = link.textContent?.trim();
+    if (!text || link.closest("#ld-drawer-root")) {
+      return null;
+    }
+
+    const meta = getTopicMeta(link);
+    return {
+      link,
+      text,
+      href: link.href,
+      targeted: meta.targeted,
+      targetSegments: meta.targetSegments
+    };
+  }).filter(Boolean);
+
+  const selectedCandidates = mode === "untargeted"
+    ? candidates.filter((candidate) => !candidate.targeted)
+    : candidates;
+
+  const candidate = selectedCandidates[$index];
+  if (!candidate) {
+    return {
+      ok: false,
+      reason: candidates.length > 0 && selectedCandidates.length === 0
+        ? "topic-not-found-after-filter"
+        : "topic-not-found",
+      count: candidates.length,
+      filteredCount: selectedCandidates.length,
+      mode
+    };
+  }
+
+  candidate.link.click();
+  return {
+    ok: true,
+    text: candidate.text,
+    href: candidate.href,
+    count: candidates.length,
+    filteredCount: selectedCandidates.length,
+    targeted: candidate.targeted,
+    targetSegments: candidate.targetSegments,
+    mode
+  };
 })()
 EOF
 )
@@ -186,9 +258,10 @@ EOF
 
 open_topic_by_index() {
   local index=$1
+  local mode=${2:-any}
   local result
   navigate_latest
-  result=$(click_topic_link_by_index "$index")
+  result=$(click_topic_link_by_index "$index" "$mode")
   if [ "$(echo "$result" | jq -r '.ok')" != "true" ]; then
     echo "$result"
     return 1
@@ -448,6 +521,161 @@ EOF
   ab_eval "$script"
 }
 
+wait_for_refresh_idle() {
+  local attempts=0
+  local state='{}'
+
+  while [ "$attempts" -lt 20 ]; do
+    state=$(refresh_button_state)
+    if [ "$(echo "$state" | jq -r '.exists')" = "true" ] \
+      && [ "$(echo "$state" | jq -r '.hidden')" = "false" ] \
+      && [ "$(echo "$state" | jq -r '.disabled')" = "false" ] \
+      && [ "$(echo "$state" | jq -r '.text // empty')" = "刷新" ]; then
+      echo "$state"
+      return 0
+    fi
+
+    ab wait 300 >/dev/null
+    attempts=$((attempts + 1))
+  done
+
+  echo "$state"
+  return 1
+}
+
+reply_entry_state() {
+  local script
+  script=$(cat <<'EOF'
+(() => {
+  const root = document.getElementById("ld-drawer-root");
+  const headerButton = root?.querySelector(".ld-drawer-reply-toggle");
+  const fabButton = root?.querySelector(".ld-drawer-reply-fab");
+  const panel = root?.querySelector("#ld-drawer-reply-panel");
+  const fabRect = fabButton?.getBoundingClientRect?.() || null;
+  const fabStyle = fabButton ? getComputedStyle(fabButton) : null;
+  return {
+    headerExists: headerButton instanceof HTMLButtonElement,
+    headerText: headerButton?.textContent?.trim() || null,
+    headerHidden: headerButton?.hidden ?? null,
+    headerExpanded: headerButton?.getAttribute("aria-expanded") || null,
+    fabExists: fabButton instanceof HTMLButtonElement,
+    fabText: fabButton?.textContent?.trim() || null,
+    fabHidden: fabButton?.hidden ?? null,
+    fabDisplay: fabStyle?.display || null,
+    fabRendered: Boolean(fabRect && fabRect.width > 0 && fabRect.height > 0),
+    fabExpanded: fabButton?.getAttribute("aria-expanded") || null,
+    panelHidden: panel?.hasAttribute("hidden") ?? null,
+    panelTitle: panel?.querySelector(".ld-reply-panel-title")?.textContent?.trim() || null
+  };
+})()
+EOF
+)
+  ab_eval "$script"
+}
+
+toolbar_layout_state() {
+  local script
+  script=$(cat <<'EOF'
+(() => {
+  const toolbar = document.querySelector("#ld-drawer-root .ld-drawer-toolbar");
+  const actions = document.querySelector("#ld-drawer-root .ld-drawer-actions");
+  const items = Array.from(actions?.querySelectorAll("button, a") || [])
+    .filter((node) => !node.hidden)
+    .map((node) => {
+      const rect = node.getBoundingClientRect();
+      const style = getComputedStyle(node);
+      const text = (node.textContent || "").replace(/\s+/g, " ").trim();
+      return {
+        text,
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        whiteSpace: style.whiteSpace,
+        display: style.display
+      };
+    });
+
+  const toolbarStyle = toolbar ? getComputedStyle(toolbar) : null;
+  const visibleTextItems = items.filter((item) => item.text);
+
+  return {
+    toolbarExists: Boolean(toolbar),
+    actionsExists: Boolean(actions),
+    gridTemplateColumns: toolbarStyle?.gridTemplateColumns || null,
+    visibleCount: items.length,
+    items,
+    nowrapOk: visibleTextItems.every((item) => item.whiteSpace === "nowrap"),
+    widthOk: visibleTextItems.every((item) => item.width >= 44 && item.width > item.height)
+  };
+})()
+EOF
+)
+  ab_eval "$script"
+}
+
+click_reply_trigger() {
+  local target=$1
+  local selector_json script
+  case "$target" in
+    header)
+      selector_json='"#ld-drawer-root .ld-drawer-reply-toggle"'
+      ;;
+    fab)
+      selector_json='"#ld-drawer-root .ld-drawer-reply-fab"'
+      ;;
+    *)
+      echo "{\"ok\":false,\"reason\":\"unknown-target\",\"target\":\"$target\"}"
+      return 0
+      ;;
+  esac
+
+  script=$(cat <<EOF
+(() => {
+  const target = $(printf '%s' "$target" | jq -Rs .);
+  const button = document.querySelector($selector_json);
+  if (!(button instanceof HTMLButtonElement)) {
+    return { ok: false, reason: "reply-trigger-not-found", target };
+  }
+
+  button.click();
+  return {
+    ok: true,
+    target,
+    hidden: button.hidden,
+    expanded: button.getAttribute("aria-expanded") || null,
+    text: button.textContent?.trim() || null
+  };
+})()
+EOF
+)
+  ab_eval "$script"
+}
+
+close_reply_panel_if_open() {
+  local script
+  script=$(cat <<'EOF'
+(() => {
+  const panel = document.querySelector("#ld-drawer-root #ld-drawer-reply-panel");
+  if (!(panel instanceof HTMLElement)) {
+    return { ok: false, reason: "reply-panel-not-found" };
+  }
+
+  if (panel.hasAttribute("hidden")) {
+    return { ok: true, closed: false };
+  }
+
+  const button = panel.querySelector(".ld-reply-panel-close");
+  if (!(button instanceof HTMLButtonElement)) {
+    return { ok: false, reason: "reply-panel-close-not-found" };
+  }
+
+  button.click();
+  return { ok: true, closed: true };
+})()
+EOF
+)
+  ab_eval "$script"
+}
+
 click_refresh_button() {
   local script
   script=$(cat <<'EOF'
@@ -506,6 +734,8 @@ run_002() {
   if [ "$(echo "$state" | jq -r '.prevText // empty')" = "上一帖" ] \
     && [ "$(echo "$state" | jq -r '.nextText // empty')" = "下一帖" ] \
     && [ "$(echo "$state" | jq -r '.settingsText // empty')" = "选项" ] \
+    && [ "$(echo "$state" | jq -r '.replyText // empty')" = "回复主题" ] \
+    && [ "$(echo "$state" | jq -r '.replyHidden')" = "false" ] \
     && [ "$(echo "$state" | jq -r '.newTabText // empty')" = "新标签打开" ]; then
     record_pass "$case_id" "toolbar ready"
   else
@@ -682,14 +912,18 @@ run_009() {
 
 run_010() {
   local case_id="AGENT-CHROME-010"
-  local original_settings setup_result before click after final_state
+  local open_result original_settings setup_result before click after final_state
   local passed=0
   local detail=""
 
-  open_topic_by_index 0 >/dev/null || {
-    record_fail "$case_id" "无法打开抽屉"
+  if ! open_result=$(open_topic_by_index 0 untargeted); then
+    if [ "$(echo "$open_result" | jq -r '.reason // empty')" = "topic-not-found-after-filter" ]; then
+      record_skip "$case_id" "当前列表页没有非 targeted 主题链接，跳过刷新按钮断言"
+    else
+      record_fail "$case_id" "无法打开抽屉: $open_result"
+    fi
     return 0
-  }
+  fi
 
   original_settings=$(settings_values)
   if [ -z "$(echo "$original_settings" | jq -r '.previewMode // empty')" ]; then
@@ -705,8 +939,9 @@ run_010() {
 
   before=$(refresh_button_state)
   click=$(click_refresh_button)
-  ab wait 1800 >/dev/null
-  after=$(refresh_button_state)
+  if ! after=$(wait_for_refresh_idle); then
+    :
+  fi
   final_state=$(drawer_state)
   restore_settings_subset "$original_settings"
 
@@ -878,6 +1113,108 @@ run_013() {
   fi
 }
 
+run_014() {
+  local case_id="AGENT-CHROME-014"
+  local original_settings original_floating off_result off_state on_result on_state settings_open_state click_result panel_state
+  local passed=0
+  local detail=""
+
+  open_topic_by_index 0 >/dev/null || {
+    record_fail "$case_id" "无法打开抽屉"
+    return 0
+  }
+
+  original_settings=$(settings_values)
+  original_floating=$(echo "$original_settings" | jq -r '.floatingReplyButton // empty')
+  if [ -z "$original_floating" ]; then
+    record_fail "$case_id" "无法读取悬浮回复入口设置"
+    return 0
+  fi
+
+  off_result=$(set_setting_value floatingReplyButton off)
+  if [ "$(echo "$off_result" | jq -r '.ok')" != "true" ]; then
+    record_fail "$case_id" "无法关闭悬浮回复入口: $off_result"
+    return 0
+  fi
+  ab wait 1200 >/dev/null
+  off_state=$(reply_entry_state)
+
+  on_result=$(set_setting_value floatingReplyButton on)
+  if [ "$(echo "$on_result" | jq -r '.ok')" != "true" ]; then
+    set_setting_value floatingReplyButton "$original_floating" >/dev/null || true
+    record_fail "$case_id" "无法开启悬浮回复入口: $on_result"
+    return 0
+  fi
+  ab wait 1200 >/dev/null
+  on_state=$(reply_entry_state)
+
+  ensure_settings_open
+  settings_open_state=$(reply_entry_state)
+  ensure_settings_closed
+  ab wait 400 >/dev/null
+
+  click_result=$(click_reply_trigger fab)
+  ab wait 800 >/dev/null
+  panel_state=$(reply_entry_state)
+
+  close_reply_panel_if_open >/dev/null || true
+  ab wait 400 >/dev/null
+  set_setting_value floatingReplyButton "$original_floating" >/dev/null || true
+  ab wait 800 >/dev/null
+  ensure_settings_closed
+
+  if [ "$(echo "$off_state" | jq -r '.headerExists')" = "true" ] \
+    && [ "$(echo "$off_state" | jq -r '.headerText // empty')" = "回复主题" ] \
+    && [ "$(echo "$off_state" | jq -r '.headerHidden')" = "false" ] \
+    && [ "$(echo "$off_state" | jq -r '.fabExists')" = "true" ] \
+    && [ "$(echo "$off_state" | jq -r '.fabHidden')" = "true" ] \
+    && [ "$(echo "$off_state" | jq -r '.fabDisplay // empty')" = "none" ] \
+    && [ "$(echo "$off_state" | jq -r '.fabRendered')" = "false" ] \
+    && [ "$(echo "$on_state" | jq -r '.fabHidden')" = "false" ] \
+    && [ "$(echo "$on_state" | jq -r '.fabDisplay // empty')" != "none" ] \
+    && [ "$(echo "$on_state" | jq -r '.fabRendered')" = "true" ] \
+    && [ "$(echo "$settings_open_state" | jq -r '.fabHidden')" = "true" ] \
+    && [ "$(echo "$settings_open_state" | jq -r '.fabDisplay // empty')" = "none" ] \
+    && [ "$(echo "$settings_open_state" | jq -r '.fabRendered')" = "false" ] \
+    && [ "$(echo "$click_result" | jq -r '.ok')" = "true" ] \
+    && [ "$(echo "$click_result" | jq -r '.target // empty')" = "fab" ] \
+    && [ "$(echo "$panel_state" | jq -r '.panelHidden')" = "false" ] \
+    && [ "$(echo "$panel_state" | jq -r '.panelTitle // empty')" = "回复主题" ]; then
+    passed=1
+    detail="off=$(echo "$off_state" | jq -c '{headerHidden, fabHidden, fabDisplay, fabRendered}') on=$(echo "$on_state" | jq -c '{fabHidden, fabDisplay, fabRendered}') settings=$(echo "$settings_open_state" | jq -c '{fabHidden, fabDisplay, fabRendered}') panel=$(echo "$panel_state" | jq -c '{panelHidden, panelTitle}')"
+  else
+    detail="off=$(echo "$off_state" | jq -c '{headerExists, headerText, headerHidden, fabExists, fabHidden, fabDisplay, fabRendered}') on=$(echo "$on_state" | jq -c '{fabHidden, fabDisplay, fabRendered}') settings=$(echo "$settings_open_state" | jq -c '{fabHidden, fabDisplay, fabRendered, panelHidden}') click=$(echo "$click_result" | jq -c '.') panel=$(echo "$panel_state" | jq -c '{panelHidden, panelTitle, headerExpanded, fabExpanded}')"
+  fi
+
+  if [ "$passed" -eq 1 ]; then
+    record_pass "$case_id" "$detail"
+  else
+    record_fail "$case_id" "$detail"
+  fi
+}
+
+run_015() {
+  local case_id="AGENT-CHROME-015"
+  local state
+
+  open_topic_by_index 0 >/dev/null || {
+    record_fail "$case_id" "无法打开抽屉"
+    return 0
+  }
+
+  state=$(toolbar_layout_state)
+
+  if [ "$(echo "$state" | jq -r '.toolbarExists')" = "true" ] \
+    && [ "$(echo "$state" | jq -r '.actionsExists')" = "true" ] \
+    && [ "$(echo "$state" | jq -r '.nowrapOk')" = "true" ] \
+    && [ "$(echo "$state" | jq -r '.widthOk')" = "true" ] \
+    && [ "$(echo "$state" | jq -r '.visibleCount')" -ge 5 ]; then
+    record_pass "$case_id" "items=$(echo "$state" | jq -c '.items | map({text, width, height, whiteSpace})')"
+  else
+    record_fail "$case_id" "state=$(echo "$state" | jq -c '{gridTemplateColumns, visibleCount, nowrapOk, widthOk, items}')"
+  fi
+}
+
 run_case() {
   local case_id=$1
   case "$case_id" in
@@ -891,6 +1228,8 @@ run_case() {
     AGENT-CHROME-009) run_009 ;;
     AGENT-CHROME-010) run_010 ;;
     AGENT-CHROME-013) run_013 ;;
+    AGENT-CHROME-014) run_014 ;;
+    AGENT-CHROME-015) run_015 ;;
     *)
       record_fail "$case_id" "未知用例 ID"
       ;;
