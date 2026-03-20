@@ -10,9 +10,13 @@
   const IMAGE_PREVIEW_SCALE_MIN = 1;
   const IMAGE_PREVIEW_SCALE_MAX = 4;
   const IMAGE_PREVIEW_SCALE_STEP = 0.2;
+  const POST_ACTION_TYPE_IDS = {
+    like: 2
+  };
   const DEFAULT_SETTINGS = {
     previewMode: "smart",
     postMode: "all",
+    authorFilter: "all",
     replyOrder: "default",
     drawerWidth: "medium",
     drawerWidthCustom: 720,
@@ -192,6 +196,14 @@
                 <option value="all">完整主题</option>
                 <option value="first">仅首帖</option>
               </select>
+            </label>
+            <label class="ld-setting-field">
+              <span class="ld-setting-label">作者过滤</span>
+              <select class="ld-setting-control" data-setting="authorFilter">
+                <option value="all">全部作者</option>
+                <option value="topicOwner">只看楼主</option>
+              </select>
+              <span class="ld-setting-hint">只在智能预览里过滤显示，不影响原帖内容</span>
             </label>
             <label class="ld-setting-field">
               <span class="ld-setting-label">回复排序</span>
@@ -968,6 +980,14 @@
       footer.appendChild(note);
     }
 
+    const authorFilterNote = buildAuthorFilterNote(viewModel, topicOwner);
+    if (authorFilterNote) {
+      const note = document.createElement("div");
+      note.className = "ld-topic-note";
+      note.textContent = authorFilterNote;
+      footer.appendChild(note);
+    }
+
     if (viewModel.hasHiddenPosts) {
       const note = document.createElement("div");
       note.className = "ld-topic-note";
@@ -999,55 +1019,87 @@
     const moreAvailable = hasMoreTopicPosts(topic);
 
     if (state.settings.postMode === "first") {
-      return {
+      return applyAuthorFilterToViewModel({
         posts: posts.slice(0, 1),
         mode: "first",
         canAutoLoadMore: false,
         hasHiddenPosts: posts.length > 1 || moreAvailable
-      };
+      }, topic);
     }
 
     if (targetSpec?.targetPostNumber) {
-      return {
+      return applyAuthorFilterToViewModel({
         posts,
         mode: "targeted",
         canAutoLoadMore: false,
         hasHiddenPosts: moreAvailable
-      };
+      }, topic);
     }
 
     if (state.settings.replyOrder !== "latestFirst" || posts.length <= 1) {
-      return {
+      return applyAuthorFilterToViewModel({
         posts,
         mode: "default",
         canAutoLoadMore: !targetSpec?.hasTarget,
         hasHiddenPosts: moreAvailable
-      };
+      }, topic);
     }
 
     if (topicHasCompletePostStream(topic)) {
-      return {
+      return applyAuthorFilterToViewModel({
         posts: [posts[0], ...posts.slice(1).reverse()],
         mode: "latestComplete",
         canAutoLoadMore: false,
         hasHiddenPosts: false
-      };
+      }, topic);
     }
 
     if (latestRepliesTopic) {
-      return {
+      return applyAuthorFilterToViewModel({
         posts: getLatestRepliesDisplayPosts(topic, latestRepliesTopic),
         mode: "latestWindow",
         canAutoLoadMore: false,
         hasHiddenPosts: moreAvailable
-      };
+      }, topic);
     }
 
-    return {
+    return applyAuthorFilterToViewModel({
       posts,
       mode: "latestUnavailable",
       canAutoLoadMore: false,
       hasHiddenPosts: moreAvailable
+    }, topic);
+  }
+
+  function applyAuthorFilterToViewModel(viewModel, topic) {
+    if (!viewModel || state.settings.authorFilter !== "topicOwner") {
+      return {
+        ...(viewModel || {}),
+        authorFilter: "all",
+        filterHiddenCount: 0,
+        filterUnavailable: false
+      };
+    }
+
+    const topicOwner = getTopicOwnerIdentity(topic);
+    const sourcePosts = Array.isArray(viewModel.posts) ? viewModel.posts : [];
+    if (!topicOwner) {
+      return {
+        ...viewModel,
+        authorFilter: "topicOwner",
+        filterHiddenCount: 0,
+        filterUnavailable: true
+      };
+    }
+
+    const filteredPosts = sourcePosts.filter((post) => isTopicOwnerPost(post, topicOwner));
+    return {
+      ...viewModel,
+      posts: filteredPosts,
+      authorFilter: "topicOwner",
+      filterHiddenCount: Math.max(0, sourcePosts.length - filteredPosts.length),
+      filterUnavailable: false,
+      hasHiddenPosts: Boolean(viewModel.hasHiddenPosts) || filteredPosts.length !== sourcePosts.length
     };
   }
 
@@ -1118,23 +1170,270 @@
     const actions = document.createElement("div");
     actions.className = "ld-post-actions";
 
-    const replyButton = document.createElement("button");
-    replyButton.type = "button";
-    replyButton.className = "ld-post-reply-button";
-    replyButton.setAttribute("aria-label", `回复第 ${post.post_number || "?"} 条`);
-    replyButton.innerHTML = `
-      <span class="ld-post-reply-button-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" focusable="false">
-          <path d="M4 12.5c0-4.14 3.36-7.5 7.5-7.5h7a1.5 1.5 0 0 1 0 3h-7A4.5 4.5 0 0 0 7 12.5v1.38l1.44-1.44a1.5 1.5 0 0 1 2.12 2.12l-4 4a1.5 1.5 0 0 1-2.12 0l-4-4a1.5 1.5 0 1 1 2.12-2.12L4 13.88V12.5Z" fill="currentColor"></path>
-        </svg>
-      </span>
-      <span class="ld-post-reply-button-label">回复这条</span>
-    `;
-    replyButton.addEventListener("click", () => openReplyPanelForPost(post));
-
-    actions.appendChild(replyButton);
+    actions.append(
+      buildLikeButton(post),
+      buildCopyLinkButton(post),
+      buildBookmarkButton(post),
+      buildReplyButton(post)
+    );
     article.append(header, body, actions);
     return article;
+  }
+
+  function buildLikeButton(post) {
+    const likeState = getPostLikeState(post);
+    const button = buildPostActionButton({
+      action: "like",
+      label: likeState.count > 0 ? likeState.count.toLocaleString() : "",
+      title: likeState.acted ? "取消点赞" : "点赞",
+      ariaLabel: likeState.acted ? "取消点赞这条" : "点赞这条",
+      isActive: likeState.acted,
+      isPressed: likeState.acted,
+      icon: `
+        <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+          <path d="M12.62 20.55a1.5 1.5 0 0 1-1.24 0C6.77 18.27 3 14.75 3 10.56 3 7.94 4.96 6 7.42 6c1.6 0 3.07.84 3.96 2.19A4.78 4.78 0 0 1 15.34 6C17.93 6 20 7.99 20 10.56c0 4.19-3.77 7.71-7.38 9.99Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path>
+        </svg>
+      `
+    });
+    button.addEventListener("click", () => handleLikeButtonClick(post, button));
+    return button;
+  }
+
+  function buildCopyLinkButton(post) {
+    const button = buildPostActionButton({
+      action: "copy-link",
+      label: "",
+      title: "复制本帖链接",
+      ariaLabel: "复制这条帖子链接",
+      icon: `
+        <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+          <path d="M10.5 13.5 13.5 10.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+          <path d="M8.4 15.6 6.7 17.3a3 3 0 1 1-4.24-4.24l3.53-3.53A3 3 0 0 1 10.2 13.8L9.1 14.9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+          <path d="m14.9 9.1 1.1-1.1a3 3 0 0 1 4.24 4.24l-3.53 3.53A3 3 0 0 1 12.48 12l1.7-1.7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>
+      `
+    });
+    button.addEventListener("click", () => handleCopyLinkButtonClick(post, button));
+    return button;
+  }
+
+  function buildBookmarkButton(post) {
+    const bookmarkState = getPostBookmarkState(post);
+    const button = buildPostActionButton({
+      action: "bookmark",
+      label: "",
+      title: bookmarkState.bookmarked ? "取消收藏" : "收藏",
+      ariaLabel: bookmarkState.bookmarked ? "取消收藏这条" : "收藏这条",
+      isActive: bookmarkState.bookmarked,
+      isPressed: bookmarkState.bookmarked,
+      icon: `
+        <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+          <path d="M7.25 4.75h9.5a1.5 1.5 0 0 1 1.5 1.5v13.05a.45.45 0 0 1-.72.36L12 15.54l-5.53 4.12a.45.45 0 0 1-.72-.36V6.25a1.5 1.5 0 0 1 1.5-1.5Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path>
+        </svg>
+      `
+    });
+    button.addEventListener("click", () => handleBookmarkButtonClick(post, button));
+    return button;
+  }
+
+  function buildReplyButton(post) {
+    const button = buildPostActionButton({
+      action: "reply",
+      label: "回复",
+      title: "回复这条",
+      ariaLabel: `回复第 ${post.post_number || "?"} 条`,
+      icon: `
+        <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+          <path d="M4 12.5c0-4.14 3.36-7.5 7.5-7.5h7a1.5 1.5 0 0 1 0 3h-7A4.5 4.5 0 0 0 7 12.5v1.38l1.44-1.44a1.5 1.5 0 0 1 2.12 2.12l-4 4a1.5 1.5 0 0 1-2.12 0l-4-4a1.5 1.5 0 1 1 2.12-2.12L4 13.88V12.5Z" fill="currentColor"></path>
+        </svg>
+      `
+    });
+    button.addEventListener("click", () => openReplyPanelForPost(post));
+    return button;
+  }
+
+  function buildPostActionButton(options = {}) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ld-post-action-button";
+    if (options.action) {
+      button.dataset.action = options.action;
+    }
+    if (options.isActive) {
+      button.classList.add("is-active");
+    }
+    if (!options.label) {
+      button.classList.add("is-icon-only");
+    }
+    if (options.title) {
+      button.title = options.title;
+    }
+    if (options.ariaLabel) {
+      button.setAttribute("aria-label", options.ariaLabel);
+    }
+    if (typeof options.isPressed === "boolean") {
+      button.setAttribute("aria-pressed", String(options.isPressed));
+    }
+
+    const icon = document.createElement("span");
+    icon.className = "ld-post-action-button-icon";
+    icon.innerHTML = options.icon || "";
+
+    const label = document.createElement("span");
+    label.className = "ld-post-action-button-label";
+    label.textContent = options.label || "";
+
+    button.append(icon, label);
+    return button;
+  }
+
+  function getPostLikeState(post) {
+    const summary = getPostActionSummary(post, POST_ACTION_TYPE_IDS.like);
+    return {
+      count: normalizeCount(summary?.count ?? post?.like_count) || 0,
+      acted: Boolean(summary?.acted),
+      canToggle: Boolean(summary?.acted) || summary?.can_act !== false
+    };
+  }
+
+  function getPostBookmarkState(post) {
+    const bookmarkId = Number(post?.bookmark_id);
+    return {
+      bookmarked: Boolean(post?.bookmarked),
+      bookmarkId: Number.isFinite(bookmarkId) ? bookmarkId : null
+    };
+  }
+
+  function getPostActionSummary(post, actionTypeId) {
+    if (!Array.isArray(post?.actions_summary)) {
+      return null;
+    }
+
+    return post.actions_summary.find((summary) => Number(summary?.id) === Number(actionTypeId)) || null;
+  }
+
+  async function handleLikeButtonClick(post, button) {
+    const likeState = getPostLikeState(post);
+    if (!likeState.canToggle) {
+      showPostActionFeedback(button, "不可用", true);
+      return;
+    }
+
+    await runPostAction(button, async () => {
+      const updatedPost = likeState.acted
+        ? await destroyPostLike(post)
+        : await createPostLike(post);
+      applyUpdatedPostToCurrentView(updatedPost);
+    });
+  }
+
+  async function handleCopyLinkButtonClick(post, button) {
+    try {
+      await writeClipboardText(buildPostPermalink(post));
+      showPostActionFeedback(button, "已复制");
+    } catch (error) {
+      showPostActionFeedback(button, error?.message || "复制失败", true);
+    }
+  }
+
+  async function handleBookmarkButtonClick(post, button) {
+    await runPostAction(button, async () => {
+      const bookmarkState = getPostBookmarkState(post);
+      const updatedPost = bookmarkState.bookmarked
+        ? await destroyPostBookmark(post, bookmarkState.bookmarkId)
+        : await createPostBookmark(post);
+      applyUpdatedPostToCurrentView(updatedPost);
+    });
+  }
+
+  async function runPostAction(button, action) {
+    if (!(button instanceof HTMLButtonElement) || button.disabled) {
+      return;
+    }
+
+    button.disabled = true;
+    button.classList.add("is-pending");
+
+    try {
+      await action();
+    } catch (error) {
+      showPostActionFeedback(button, error?.message || "操作失败", true);
+    } finally {
+      button.disabled = false;
+      button.classList.remove("is-pending");
+    }
+  }
+
+  function showPostActionFeedback(button, message, isError = false) {
+    if (!(button instanceof HTMLButtonElement)) {
+      return;
+    }
+
+    const label = button.querySelector(".ld-post-action-button-label");
+    if (!(label instanceof HTMLElement)) {
+      return;
+    }
+
+    window.clearTimeout(Number(button.dataset.feedbackTimer || 0));
+    const originalText = button.dataset.originalLabel ?? label.textContent ?? "";
+    button.dataset.originalLabel = originalText;
+    label.textContent = message || "";
+    button.classList.toggle("is-feedback-error", isError);
+    button.classList.remove("is-icon-only");
+
+    const timer = window.setTimeout(() => {
+      if (!button.isConnected) {
+        return;
+      }
+
+      label.textContent = button.dataset.originalLabel || "";
+      button.classList.toggle("is-icon-only", !label.textContent);
+      button.classList.remove("is-feedback-error");
+      button.dataset.feedbackTimer = "";
+    }, 1400);
+
+    button.dataset.feedbackTimer = String(timer);
+  }
+
+  function buildPostPermalink(post) {
+    const currentUrl = state.currentUrl || location.href;
+    const url = new URL(currentUrl, location.href);
+    const parsed = parseTopicPath(url.pathname, state.currentTopicIdHint);
+    url.pathname = parsed?.topicPath || stripTrailingSlash(url.pathname);
+    url.search = "";
+    url.hash = "";
+
+    if (Number.isFinite(post?.post_number) && post.post_number > 1) {
+      url.pathname = `${url.pathname}/${post.post_number}`;
+    }
+
+    return url.toString().replace(/\/$/, "");
+  }
+
+  async function writeClipboardText(text) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    textarea.style.pointerEvents = "none";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+
+    try {
+      const copied = document.execCommand("copy");
+      if (!copied) {
+        throw new Error("复制失败");
+      }
+    } finally {
+      textarea.remove();
+    }
   }
 
   function handleDrawerBodyScroll() {
@@ -1794,6 +2093,23 @@
     return "";
   }
 
+  function buildAuthorFilterNote(viewModel, topicOwner) {
+    if (viewModel.authorFilter !== "topicOwner") {
+      return "";
+    }
+
+    if (viewModel.filterUnavailable || !topicOwner) {
+      return `当前已切到\u201C只看楼主\u201D模式，但这次没识别出楼主身份，暂按当前结果显示。`;
+    }
+
+    const ownerLabel = topicOwner.displayUsername ? `@${topicOwner.displayUsername}` : "楼主";
+    if (!viewModel.posts.length && viewModel.canAutoLoadMore) {
+      return `当前为\u201C只看楼主\u201D模式，已加载范围内还没有 ${ownerLabel} 的更多发言，继续下滑会继续尝试加载。`;
+    }
+
+    return `当前为\u201C只看楼主\u201D模式，仅显示 ${ownerLabel} 的发言。`;
+  }
+
   function getLatestRepliesTopicUrl(topicUrl, topicIdHint = null) {
     const url = new URL(topicUrl);
     const parsed = parseTopicPath(url.pathname, topicIdHint);
@@ -1960,6 +2276,172 @@
     }
 
     return data;
+  }
+
+  async function createPostLike(post) {
+    const response = await fetch(`${location.origin}/post_actions.json`, {
+      method: "POST",
+      credentials: "include",
+      headers: buildAuthenticatedFormHeaders(),
+      body: buildFormBody({
+        id: post?.id,
+        post_action_type_id: POST_ACTION_TYPE_IDS.like
+      })
+    });
+
+    return parsePostActionResponse(response);
+  }
+
+  async function destroyPostLike(post) {
+    const url = new URL(`${location.origin}/post_actions/${post?.id}.json`);
+    url.searchParams.set("post_action_type_id", String(POST_ACTION_TYPE_IDS.like));
+
+    const response = await fetch(url.toString(), {
+      method: "DELETE",
+      credentials: "include",
+      headers: buildAuthenticatedFormHeaders()
+    });
+
+    return parsePostActionResponse(response);
+  }
+
+  async function createPostBookmark(post) {
+    const response = await fetch(`${location.origin}/bookmarks.json`, {
+      method: "POST",
+      credentials: "include",
+      headers: buildAuthenticatedFormHeaders(),
+      body: buildFormBody({
+        bookmarkable_id: post?.id,
+        bookmarkable_type: "Post"
+      })
+    });
+
+    await parseMutationResponse(response);
+    return refreshSinglePostState(post);
+  }
+
+  async function destroyPostBookmark(post, bookmarkId) {
+    if (!Number.isFinite(bookmarkId)) {
+      throw new Error("未找到收藏记录，请刷新后重试");
+    }
+
+    const response = await fetch(`${location.origin}/bookmarks/${bookmarkId}.json`, {
+      method: "DELETE",
+      credentials: "include",
+      headers: buildAuthenticatedFormHeaders()
+    });
+
+    await parseMutationResponse(response);
+    return refreshSinglePostState(post);
+  }
+
+  async function refreshSinglePostState(post) {
+    const posts = await fetchTopicPostsBatch(state.currentUrl, [post?.id], undefined, state.currentTopicIdHint);
+    const refreshedPost = posts.find((item) => item?.id === post?.id || item?.post_number === post?.post_number);
+    if (!refreshedPost) {
+      throw new Error("刷新帖子状态失败");
+    }
+    return refreshedPost;
+  }
+
+  function buildAuthenticatedFormHeaders() {
+    const csrfToken = getCsrfToken();
+    if (!csrfToken) {
+      throw new Error("未找到登录令牌，请刷新页面后重试");
+    }
+
+    return {
+      Accept: "application/json",
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+      "X-Requested-With": "XMLHttpRequest",
+      "X-CSRF-Token": csrfToken
+    };
+  }
+
+  function buildFormBody(values) {
+    const body = new URLSearchParams();
+    for (const [key, value] of Object.entries(values || {})) {
+      if (value === null || value === undefined || value === "") {
+        continue;
+      }
+
+      body.set(key, String(value));
+    }
+    return body;
+  }
+
+  async function parsePostActionResponse(response) {
+    const data = await parseMutationResponse(response);
+    if (!data || typeof data !== "object" || !Number.isFinite(Number(data.id))) {
+      throw new Error("帖子状态返回异常");
+    }
+
+    return data;
+  }
+
+  async function parseMutationResponse(response) {
+    const contentType = response.headers.get("content-type") || "";
+    const data = contentType.includes("json")
+      ? await response.json()
+      : null;
+
+    if (!response.ok) {
+      const message = Array.isArray(data?.errors) && data.errors.length > 0
+        ? data.errors.join("；")
+        : (data?.error || data?.message || `Unexpected response: ${response.status}`);
+      throw new Error(message);
+    }
+
+    return data;
+  }
+
+  function applyUpdatedPostToCurrentView(updatedPost) {
+    if (!updatedPost || !state.currentTopic) {
+      return;
+    }
+
+    const previousScrollTop = state.drawerBody?.scrollTop || 0;
+    const nextTopic = replaceTopicPost(state.currentTopic, updatedPost);
+    const nextLatestRepliesTopic = replaceTopicPost(state.currentLatestRepliesTopic, updatedPost);
+
+    renderTopic(nextTopic, state.currentUrl, state.currentFallbackTitle, state.currentResolvedTargetPostNumber, {
+      latestRepliesTopic: nextLatestRepliesTopic,
+      targetSpec: state.currentTargetSpec,
+      preserveScrollTop: previousScrollTop
+    });
+  }
+
+  function replaceTopicPost(topic, nextPost) {
+    if (!topic || !nextPost) {
+      return topic;
+    }
+
+    const posts = topic?.post_stream?.posts || [];
+    const nextPostId = Number(nextPost.id);
+    const nextPostNumber = Number(nextPost.post_number);
+    let replaced = false;
+    const nextPosts = posts.map((post) => {
+      const sameId = Number.isFinite(nextPostId) && Number(post?.id) === nextPostId;
+      const samePostNumber = Number.isFinite(nextPostNumber) && Number(post?.post_number) === nextPostNumber;
+      if (sameId || samePostNumber) {
+        replaced = true;
+        return nextPost;
+      }
+      return post;
+    });
+
+    if (!replaced) {
+      nextPosts.push(nextPost);
+      nextPosts.sort((left, right) => Number(left?.post_number || 0) - Number(right?.post_number || 0));
+    }
+
+    return {
+      ...topic,
+      post_stream: {
+        ...(topic.post_stream || {}),
+        posts: nextPosts
+      }
+    };
   }
 
   function getCsrfToken() {
@@ -2428,6 +2910,15 @@
     return parts.join(" · ");
   }
 
+  function normalizeCount(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < 0) {
+      return null;
+    }
+
+    return Math.round(numeric);
+  }
+
   function formatDate(value) {
     try {
       return new Intl.DateTimeFormat("zh-CN", {
@@ -2463,6 +2954,10 @@
 
       if (settings.drawerMode !== "push" && settings.drawerMode !== "overlay") {
         settings.drawerMode = DEFAULT_SETTINGS.drawerMode;
+      }
+
+      if (settings.authorFilter !== "all" && settings.authorFilter !== "topicOwner") {
+        settings.authorFilter = DEFAULT_SETTINGS.authorFilter;
       }
 
       settings.drawerWidthCustom = clampDrawerWidth(settings.drawerWidthCustom);

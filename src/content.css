@@ -604,11 +604,14 @@ body.ld-drawer-page-open #ld-drawer-root {
 
 #ld-drawer-root .ld-post-actions {
   display: flex;
-  justify-content: flex-end;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
   padding: 0 16px 14px;
 }
 
-#ld-drawer-root .ld-post-reply-button {
+#ld-drawer-root .ld-post-action-button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -620,26 +623,53 @@ body.ld-drawer-page-open #ld-drawer-root {
   font-size: 12px;
   line-height: 1;
   cursor: pointer;
+  transition: border-color 0.18s ease, color 0.18s ease, background-color 0.18s ease, opacity 0.18s ease;
 }
 
-#ld-drawer-root .ld-post-reply-button:hover {
+#ld-drawer-root .ld-post-action-button:hover {
   border-color: var(--tertiary, #3b82f6);
   color: var(--tertiary, #3b82f6);
 }
 
-#ld-drawer-root .ld-post-reply-button-icon {
+#ld-drawer-root .ld-post-action-button.is-active {
+  border-color: color-mix(in srgb, var(--tertiary, #3b82f6) 32%, var(--primary-low, rgba(15, 23, 42, 0.12)));
+  background: color-mix(in srgb, var(--tertiary, #3b82f6) 10%, var(--secondary, #fff));
+  color: var(--tertiary, #3b82f6);
+}
+
+#ld-drawer-root .ld-post-action-button:disabled,
+#ld-drawer-root .ld-post-action-button.is-pending {
+  opacity: 0.68;
+  cursor: wait;
+}
+
+#ld-drawer-root .ld-post-action-button.is-feedback-error {
+  color: #b91c1c;
+  border-color: rgba(185, 28, 28, 0.2);
+  background: rgba(254, 226, 226, 0.72);
+}
+
+#ld-drawer-root .ld-post-action-button.is-icon-only {
+  padding-right: 8px;
+}
+
+#ld-drawer-root .ld-post-action-button-icon {
   width: 14px;
   height: 14px;
   display: inline-flex;
 }
 
-#ld-drawer-root .ld-post-reply-button-icon svg {
+#ld-drawer-root .ld-post-action-button-icon svg {
   width: 14px;
   height: 14px;
 }
 
-#ld-drawer-root .ld-post-reply-button-label {
+#ld-drawer-root .ld-post-action-button-label {
   white-space: nowrap;
+}
+
+#ld-drawer-root .ld-post-action-button-label:empty {
+  display: none;
 }
 
 #ld-drawer-root .ld-post-body > :first-child {
