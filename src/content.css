@@ -363,8 +363,7 @@ body.ld-drawer-page-open #ld-drawer-root {
 }
 
 #ld-drawer-root .ld-drawer-settings-card,
-#ld-drawer-root .ld-drawer-reply-panel,
-#ld-drawer-root .ld-post-body pre {
+#ld-drawer-root .ld-drawer-reply-panel {
   overscroll-behavior: contain;
 }
 

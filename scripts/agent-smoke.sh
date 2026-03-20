@@ -212,9 +212,19 @@ click_topic_link_by_index() {
     };
   }).filter(Boolean);
 
-  const selectedCandidates = mode === "untargeted"
-    ? candidates.filter((candidate) => !candidate.targeted)
-    : candidates;
+  const selectedCandidates = (() => {
+    if (mode === "untargeted") {
+      return candidates.filter((candidate) => !candidate.targeted);
+    }
+
+    if (mode === "refreshable") {
+      return candidates.filter((candidate) => !candidate.targeted || (
+        candidate.targetSegments.length === 1 && candidate.targetSegments[0] === "last"
+      ));
+    }
+
+    return candidates;
+  })();
 
   const candidate = selectedCandidates[$index];
   if (!candidate) {
@@ -771,9 +781,9 @@ run_010() {
   local passed=0
   local detail=""
 
-  if ! open_result=$(open_topic_by_index 0 untargeted); then
+  if ! open_result=$(open_topic_by_index 0 refreshable); then
     if [ "$(echo "$open_result" | jq -r '.reason // empty')" = "topic-not-found-after-filter" ]; then
-      record_skip "$case_id" "当前列表页没有非 targeted 主题链接，跳过刷新按钮断言"
+      record_skip "$case_id" "当前列表页没有可用于刷新断言的普通主题或 /last 主题链接"
     else
       record_fail "$case_id" "无法打开抽屉: $open_result"
     fi
