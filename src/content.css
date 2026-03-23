@@ -423,6 +423,7 @@ body.ld-drawer-page-open #ld-drawer-root {
 #ld-drawer-root .ld-drawer-body {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
@@ -692,6 +693,7 @@ body.ld-drawer-page-open #ld-drawer-root {
 #ld-drawer-root .ld-topic-view {
   display: grid;
   gap: 14px;
+  min-width: 0;
 }
 
 #ld-drawer-root .ld-post-card {
@@ -752,6 +754,9 @@ body.ld-drawer-page-open #ld-drawer-root {
   padding: 16px;
   line-height: 1.72;
   font-size: var(--ld-post-body-font-size, 14px);
+  overflow-wrap: break-word;
+  word-break: break-word;
+  min-width: 0;
 }
 
 #ld-drawer-root .ld-post-actions {
@@ -840,6 +845,13 @@ body.ld-drawer-page-open #ld-drawer-root {
 #ld-drawer-root .ld-post-body pre {
   overflow: auto;
   border-radius: 12px;
+  max-width: 100%;
+}
+
+#ld-drawer-root .ld-post-body table {
+  max-width: 100%;
+  overflow-x: auto;
+  display: block;
 }
 
 #ld-drawer-root .ld-post-body img,
