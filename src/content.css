@@ -87,6 +87,7 @@ body.ld-drawer-page-open #ld-drawer-root {
   border-left: 1px solid var(--primary-low, rgba(15, 23, 42, 0.12));
   box-shadow: -16px 0 40px rgba(15, 23, 42, 0.18);
   pointer-events: auto;
+  overflow: hidden;
 }
 
 #ld-image-preview-root .ld-image-preview {
@@ -423,7 +424,9 @@ body.ld-drawer-page-open #ld-drawer-root {
 #ld-drawer-root .ld-drawer-body {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--tertiary, #3b82f6) 40%, transparent) transparent;
@@ -692,6 +695,7 @@ body.ld-drawer-page-open #ld-drawer-root {
 #ld-drawer-root .ld-topic-view {
   display: grid;
   gap: 14px;
+  min-width: 0;
 }
 
 #ld-drawer-root .ld-post-card {
@@ -752,6 +756,10 @@ body.ld-drawer-page-open #ld-drawer-root {
   padding: 16px;
   line-height: 1.72;
   font-size: var(--ld-post-body-font-size, 14px);
+  overflow-wrap: break-word;
+  word-break: break-word;
+  overflow-x: hidden;
+  min-width: 0;
 }
 
 #ld-drawer-root .ld-post-actions {
@@ -837,9 +845,57 @@ body.ld-drawer-page-open #ld-drawer-root {
   font-size: max(12px, calc(var(--ld-post-body-font-size, 14px) - 1px));
 }
 
+#ld-drawer-root .ld-code-block-wrapper {
+  position: relative;
+}
+
+#ld-drawer-root .ld-code-copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--primary-low, rgba(15, 23, 42, 0.12));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--secondary, #fff) 85%, transparent);
+  color: var(--primary-medium, rgba(15, 23, 42, 0.64));
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+  z-index: 1;
+  padding: 0;
+  backdrop-filter: blur(4px);
+}
+
+#ld-drawer-root .ld-code-block-wrapper:hover .ld-code-copy-btn {
+  opacity: 1;
+}
+
+#ld-drawer-root .ld-code-copy-btn:hover {
+  background: var(--secondary, #fff);
+  color: var(--primary, #1f2937);
+  border-color: var(--primary-low, rgba(15, 23, 42, 0.2));
+}
+
+#ld-drawer-root .ld-code-copy-btn.is-copied {
+  color: #16a34a;
+  border-color: rgba(22, 163, 74, 0.3);
+  opacity: 1;
+}
+
 #ld-drawer-root .ld-post-body pre {
   overflow: auto;
   border-radius: 12px;
+  max-width: 100%;
+}
+
+#ld-drawer-root .ld-post-body table {
+  max-width: 100%;
+  overflow-x: auto;
+  display: block;
 }
 
 #ld-drawer-root .ld-post-body img,
