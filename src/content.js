@@ -1251,6 +1251,48 @@
     body.className = "ld-post-body cooked";
     body.innerHTML = post.cooked || "";
 
+    // 为代码块添加复制按钮
+    for (const pre of body.querySelectorAll("pre")) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "ld-code-block-wrapper";
+      pre.parentNode.insertBefore(wrapper, pre);
+      wrapper.appendChild(pre);
+
+      const copyBtn = document.createElement("button");
+      copyBtn.className = "ld-code-copy-btn";
+      copyBtn.type = "button";
+      copyBtn.title = "复制代码";
+      copyBtn.setAttribute("aria-label", "复制代码");
+      copyBtn.innerHTML = `
+        <svg viewBox="0 0 24 24" width="14" height="14" focusable="false" aria-hidden="true">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"></rect>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" fill="none" stroke="currentColor" stroke-width="2"></path>
+        </svg>
+      `;
+      copyBtn.addEventListener("click", async () => {
+        const code = pre.querySelector("code")?.textContent || pre.textContent || "";
+        try {
+          await writeClipboardText(code);
+          copyBtn.classList.add("is-copied");
+          copyBtn.innerHTML = `
+            <svg viewBox="0 0 24 24" width="14" height="14" focusable="false" aria-hidden="true">
+              <polyline points="20 6 9 17 4 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline>
+            </svg>
+          `;
+          setTimeout(() => {
+            copyBtn.classList.remove("is-copied");
+            copyBtn.innerHTML = `
+              <svg viewBox="0 0 24 24" width="14" height="14" focusable="false" aria-hidden="true">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" fill="none" stroke="currentColor" stroke-width="2"></path>
+              </svg>
+            `;
+          }, 1500);
+        } catch (_) { /* 静默失败 */ }
+      });
+      wrapper.appendChild(copyBtn);
+    }
+
     for (const link of body.querySelectorAll("a[href]")) {
       link.target = "_blank";
       link.rel = "noopener noreferrer";
