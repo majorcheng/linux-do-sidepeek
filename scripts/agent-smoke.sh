@@ -23,6 +23,7 @@ ALL_CASES=(
   "AGENT-CHROME-015"
   "AGENT-CHROME-016"
   "AGENT-CHROME-017"
+  "AGENT-CHROME-020"
 )
 
 CASES=("${DEFAULT_CASES[@]}")
@@ -600,6 +601,30 @@ EOF
   ab_eval "$script"
 }
 
+reply_pad_min_length_state() {
+  local script
+  script=$(cat <<'EOF'
+(() => {
+  const panel = document.querySelector("#ld-drawer-root #ld-drawer-reply-panel");
+  const textarea = panel?.querySelector(".ld-reply-textarea");
+  const button = panel?.querySelector('[data-action="pad-min-length"]');
+  const status = panel?.querySelector(".ld-reply-status");
+  const value = textarea?.value || "";
+  return {
+    panelHidden: panel?.hasAttribute("hidden") ?? null,
+    buttonExists: button instanceof HTMLButtonElement,
+    buttonText: button?.textContent?.trim() || null,
+    buttonDisabled: button?.disabled ?? null,
+    value,
+    fillerCount: (value.match(/:grinning_face:/g) || []).length,
+    statusText: status?.textContent?.trim() || null
+  };
+})()
+EOF
+)
+  ab_eval "$script"
+}
+
 toolbar_layout_state() {
   local script
   script=$(cat <<'EOF'
@@ -726,6 +751,52 @@ close_reply_panel_if_open() {
 
   button.click();
   return { ok: true, closed: true };
+})()
+EOF
+)
+  ab_eval "$script"
+}
+
+set_reply_textarea_value() {
+  local text=$1
+  local script
+  script=$(cat <<EOF
+(() => {
+  const text = $(printf '%s' "$text" | jq -Rs .);
+  const textarea = document.querySelector("#ld-drawer-root #ld-drawer-reply-panel .ld-reply-textarea");
+  if (!(textarea instanceof HTMLTextAreaElement)) {
+    return { ok: false, reason: "reply-textarea-not-found" };
+  }
+
+  textarea.value = text;
+  textarea.focus();
+  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  return {
+    ok: true,
+    value: textarea.value
+  };
+})()
+EOF
+)
+  ab_eval "$script"
+}
+
+click_reply_pad_min_length() {
+  local script
+  script=$(cat <<'EOF'
+(() => {
+  const button = document.querySelector("#ld-drawer-root #ld-drawer-reply-panel [data-action=\"pad-min-length\"]");
+  if (!(button instanceof HTMLButtonElement)) {
+    return { ok: false, reason: "reply-pad-min-length-not-found" };
+  }
+
+  button.click();
+  return {
+    ok: true,
+    text: button.textContent?.trim() || null,
+    disabled: button.disabled
+  };
 })()
 EOF
 )
@@ -1447,6 +1518,76 @@ run_017() {
   fi
 }
 
+run_020() {
+  local case_id="AGENT-CHROME-020"
+  local original_settings original_preview preview_result
+  local open_result set_result before click_result after second_click after_second
+
+  open_topic_by_index 0 >/dev/null || {
+    record_fail "$case_id" "无法打开抽屉"
+    return 0
+  }
+
+  original_settings=$(settings_values)
+  original_preview=$(echo "$original_settings" | jq -r '.previewMode // empty')
+  if [ -z "$original_preview" ]; then
+    record_fail "$case_id" "无法读取当前预览模式"
+    return 0
+  fi
+
+  preview_result=$(set_setting_value previewMode smart)
+  if [ "$(echo "$preview_result" | jq -r '.ok')" != "true" ]; then
+    record_fail "$case_id" "无法切到智能预览: $preview_result"
+    return 0
+  fi
+
+  ab wait 1200 >/dev/null
+  close_reply_panel_if_open >/dev/null || true
+  open_result=$(click_reply_trigger header)
+  if [ "$(echo "$open_result" | jq -r '.ok')" != "true" ]; then
+    set_setting_value previewMode "$original_preview" >/dev/null || true
+    record_fail "$case_id" "无法打开快速回复面板: $open_result"
+    return 0
+  fi
+
+  ab wait 300 >/dev/null
+  set_result=$(set_reply_textarea_value "你好")
+  if [ "$(echo "$set_result" | jq -r '.ok')" != "true" ]; then
+    close_reply_panel_if_open >/dev/null || true
+    set_setting_value previewMode "$original_preview" >/dev/null || true
+    record_fail "$case_id" "无法写入快速回复内容: $set_result"
+    return 0
+  fi
+
+  before=$(reply_pad_min_length_state)
+  click_result=$(click_reply_pad_min_length)
+  ab wait 200 >/dev/null
+  after=$(reply_pad_min_length_state)
+  second_click=$(click_reply_pad_min_length)
+  ab wait 200 >/dev/null
+  after_second=$(reply_pad_min_length_state)
+
+  close_reply_panel_if_open >/dev/null || true
+  set_setting_value previewMode "$original_preview" >/dev/null || true
+  ab wait 300 >/dev/null
+
+  if [ "$(echo "$before" | jq -r '.buttonExists')" = "true" ] \
+    && [ "$(echo "$before" | jq -r '.buttonText // empty')" = "补齐20字" ] \
+    && [ "$(echo "$before" | jq -r '.fillerCount')" = "0" ] \
+    && [ "$(echo "$click_result" | jq -r '.ok')" = "true" ] \
+    && [ "$(echo "$after" | jq -r '.panelHidden')" = "false" ] \
+    && [ "$(echo "$after" | jq -r '.fillerCount')" = "18" ] \
+    && echo "$after" | jq -e '.value | startswith("你好 ") and endswith(":grinning_face:")' >/dev/null \
+    && echo "$after" | jq -e '.statusText | test("已补齐 18 个 :grinning_face:")' >/dev/null \
+    && [ "$(echo "$second_click" | jq -r '.ok')" = "true" ] \
+    && [ "$(echo "$after_second" | jq -r '.fillerCount')" = "18" ] \
+    && echo "$after_second" | jq -e '.statusText | test("无需补齐")' >/dev/null; then
+    record_pass "$case_id" "before=$(echo "$before" | jq -c '{buttonText, fillerCount}') after=$(echo "$after" | jq -c '{fillerCount, statusText}') afterSecond=$(echo "$after_second" | jq -c '{fillerCount, statusText}')"
+  else
+    record_fail "$case_id" "open=$(echo "$open_result" | jq -c '.') set=$(echo "$set_result" | jq -c '.') before=$(echo "$before" | jq -c '{buttonExists, buttonText, buttonDisabled, fillerCount, statusText}') click=$(echo "$click_result" | jq -c '.') after=$(echo "$after" | jq -c '{panelHidden, fillerCount, statusText, value}') second=$(echo "$second_click" | jq -c '.') afterSecond=$(echo "$after_second" | jq -c '{fillerCount, statusText, value}')"
+  fi
+}
+
 run_case() {
   local case_id=$1
   case "$case_id" in
@@ -1464,6 +1605,7 @@ run_case() {
     AGENT-CHROME-015) run_015 ;;
     AGENT-CHROME-016) run_016 ;;
     AGENT-CHROME-017) run_017 ;;
+    AGENT-CHROME-020) run_020 ;;
     *)
       record_fail "$case_id" "未知用例 ID"
       ;;

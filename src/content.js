@@ -14,6 +14,9 @@
   const POST_BODY_FONT_SIZE_MIN = 13;
   const POST_BODY_FONT_SIZE_MAX = 18;
   const REPLY_UPLOAD_MARKER = "\u2063";
+  const REPLY_MIN_WORDS = 20;
+  const REPLY_FILL_EMOJI = ":grinning_face:";
+  const REPLY_FILL_EMOJI_REGEXP = /:grinning_face:/g;
   const POST_ACTION_TYPE_IDS = {
     like: 2
   };
@@ -100,6 +103,7 @@
     replyPanel: null,
     replyPanelTitle: null,
     replyTextarea: null,
+    replyFillButton: null,
     replySubmitButton: null,
     replyCancelButton: null,
     replyStatus: null,
@@ -295,6 +299,7 @@
           <div class="ld-reply-status" aria-live="polite"></div>
           <div class="ld-reply-actions">
             <button class="ld-reply-action" type="button" data-action="cancel">取消</button>
+            <button class="ld-reply-action" type="button" data-action="pad-min-length" title="不足 20 字时自动补齐 :grinning_face:">补齐20字</button>
             <button class="ld-reply-action ld-reply-action-primary" type="button" data-action="submit">发送回复</button>
           </div>
         </div>
@@ -326,6 +331,7 @@
     state.replyPanel = root.querySelector(".ld-drawer-reply-panel");
     state.replyPanelTitle = root.querySelector(".ld-reply-panel-title");
     state.replyTextarea = root.querySelector(".ld-reply-textarea");
+    state.replyFillButton = root.querySelector('[data-action="pad-min-length"]');
     state.replySubmitButton = root.querySelector('[data-action="submit"]');
     state.replyCancelButton = root.querySelector('[data-action="cancel"]');
     state.replyStatus = root.querySelector(".ld-reply-status");
@@ -355,6 +361,7 @@
     state.replyToggleButton.addEventListener("click", toggleReplyPanel);
     state.replyFabButton.addEventListener("click", toggleReplyPanel);
     state.replyCancelButton.addEventListener("click", () => setReplyPanelOpen(false));
+    state.replyFillButton.addEventListener("click", handleReplyFillToMinWords);
     state.replySubmitButton.addEventListener("click", handleReplySubmit);
     root.querySelector(".ld-reply-panel-close").addEventListener("click", () => setReplyPanelOpen(false));
     state.replyTextarea.addEventListener("keydown", handleReplyTextareaKeydown);
@@ -1946,6 +1953,57 @@
     state.replyStatus.textContent = state.replyUploadPendingCount > 1
       ? `正在上传 ${state.replyUploadPendingCount} 张图片...`
       : "正在上传图片...";
+  }
+
+  function countReplyWords(text) {
+    const content = String(text || "").trim();
+    if (!content) {
+      return 0;
+    }
+
+    // 这里按“字数”而不是“字符数”估算：把 :grinning_face: 先当作单个词元，
+    // 再按中文单字、英文/数字连续串、其它可见符号分词计数，贴近站点最小字数限制语义。
+    const normalized = content
+      .replace(REPLY_FILL_EMOJI_REGEXP, " __ld_fill_emoji__ ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!normalized) {
+      return 0;
+    }
+
+    const tokens = normalized.match(/__ld_fill_emoji__|[\p{Script=Han}]|[A-Za-z0-9]+|[^\s]/gu);
+    return Array.isArray(tokens) ? tokens.length : 0;
+  }
+
+  function handleReplyFillToMinWords() {
+    if (!state.replyTextarea || !state.replyStatus) {
+      return;
+    }
+
+    if (state.replyUploadPendingCount > 0) {
+      state.replyStatus.textContent = state.replyUploadPendingCount > 1
+        ? `还有 ${state.replyUploadPendingCount} 张图片正在上传，请等待上传完成后再补齐。`
+        : "图片还在上传中，请等待上传完成后再补齐。";
+      return;
+    }
+
+    const currentText = state.replyTextarea.value;
+    const currentWordCount = countReplyWords(currentText);
+    if (currentWordCount >= REPLY_MIN_WORDS) {
+      state.replyStatus.textContent = `当前已达到 ${currentWordCount} 字，无需补齐。`;
+      state.replyTextarea.focus();
+      return;
+    }
+
+    const needCount = REPLY_MIN_WORDS - currentWordCount;
+    const paddingText = Array.from({ length: needCount }, () => REPLY_FILL_EMOJI).join(" ");
+    const spacer = currentText && !/\s$/.test(currentText) ? " " : "";
+    state.replyTextarea.value = `${currentText}${spacer}${paddingText}`;
+    state.replyTextarea.dispatchEvent(new Event("input", { bubbles: true }));
+    state.replyTextarea.focus();
+    const end = state.replyTextarea.value.length;
+    state.replyTextarea.setSelectionRange(end, end);
+    state.replyStatus.textContent = `已补齐 ${needCount} 个 ${REPLY_FILL_EMOJI}，当前按规则计为 ${REPLY_MIN_WORDS} 字。`;
   }
 
   async function handleReplySubmit() {
@@ -3604,6 +3662,10 @@
 
     if (state.replyCancelButton) {
       state.replyCancelButton.disabled = state.isReplySubmitting;
+    }
+
+    if (state.replyFillButton) {
+      state.replyFillButton.disabled = !hasTopic || state.isReplySubmitting || isReplyUploading;
     }
   }
 
