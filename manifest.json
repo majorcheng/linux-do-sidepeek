@@ -13,6 +13,7 @@
       }
     }
   },
+  "permissions": ["clipboardWrite"],
   "host_permissions": [
     "https://linux.do/t/*"
   ],

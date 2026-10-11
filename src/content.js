@@ -21,7 +21,7 @@
     like: 2
   };
   const DEFAULT_SETTINGS = {
-    previewMode: "iframe",
+    previewMode: "smart",
     postMode: "all",
     postBodyFontSize: 15,
     authorFilter: "all",
@@ -121,6 +121,7 @@
     postBodyFontSizeHint: null,
     settingsCloseButton: null,
     settingsToggle: null,
+    replyOrderToggleButton: null,
     latestRepliesRefreshButton: null,
     prevButton: null,
     nextButton: null,
@@ -192,6 +193,7 @@
               <button class="ld-drawer-nav" type="button" data-nav="prev">上一帖</button>
               <button class="ld-drawer-nav" type="button" data-nav="next">下一帖</button>
               <button class="ld-drawer-settings-toggle" type="button" aria-expanded="false" aria-controls="ld-drawer-settings">选项</button>
+              <button class="ld-drawer-reply-order-toggle" type="button" aria-pressed="false">默认顺序</button>
               <button class="ld-drawer-refresh" type="button" aria-label="刷新最新回复" title="刷新最新回复" hidden>刷新</button>
               <button class="ld-drawer-reply-toggle ld-drawer-reply-trigger" type="button" aria-expanded="false" aria-controls="ld-drawer-reply-panel" aria-label="回复当前主题" title="回复当前主题" hidden>回复主题</button>
               <a class="ld-drawer-link" href="https://linux.do/latest" target="_blank" rel="noopener noreferrer">新标签打开</a>
@@ -348,6 +350,7 @@
     state.postBodyFontSizeHint = root.querySelector('[data-setting-hint="postBodyFontSize"]');
     state.settingsCloseButton = root.querySelector(".ld-settings-close");
     state.settingsToggle = root.querySelector(".ld-drawer-settings-toggle");
+    state.replyOrderToggleButton = root.querySelector(".ld-drawer-reply-order-toggle");
     state.latestRepliesRefreshButton = root.querySelector(".ld-drawer-refresh");
     state.prevButton = root.querySelector('[data-nav="prev"]');
     state.nextButton = root.querySelector('[data-nav="next"]');
@@ -357,6 +360,7 @@
     state.prevButton.addEventListener("click", () => navigateTopic(-1));
     state.nextButton.addEventListener("click", () => navigateTopic(1));
     state.settingsToggle.addEventListener("click", toggleSettingsPanel);
+    state.replyOrderToggleButton.addEventListener("click", toggleReplyOrderFromToolbar);
     state.latestRepliesRefreshButton.addEventListener("click", handleLatestRepliesRefresh);
     state.replyToggleButton.addEventListener("click", toggleReplyPanel);
     state.replyFabButton.addEventListener("click", toggleReplyPanel);
@@ -1233,14 +1237,17 @@
     const authorRow = document.createElement("div");
     authorRow.className = "ld-post-author-row";
 
-    const displayName = document.createElement("strong");
-    displayName.textContent = post.name || post.username || "匿名用户";
+    const displayName = buildPostUserLink(
+      post.username,
+      post.name || post.username || "匿名用户",
+      "ld-post-display-name"
+    );
+    authorRow.append(displayName);
 
-    const username = document.createElement("span");
-    username.className = "ld-post-username";
-    username.textContent = post.username ? `@${post.username}` : "";
-
-    authorRow.append(displayName, username);
+    if (post.username) {
+      const username = buildPostUserLink(post.username, `@${post.username}`, "ld-post-username");
+      authorRow.append(username);
+    }
 
     const topicOwnerBadge = buildTopicOwnerBadge(post, topicOwner);
     if (topicOwnerBadge) {
@@ -1295,7 +1302,101 @@
               </svg>
             `;
           }, 1500);
-        } catch (_) { /* 静默失败 */ }
+        } catch (_) {
+          copyBtn.title = "复制失败";
+          setTimeout(() => { copyBtn.title = "复制代码"; }, 1500);
+        }
+      });
+      wrapper.appendChild(copyBtn);
+    }
+
+    // 为表格添加复制按钮
+    for (const table of body.querySelectorAll("table")) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "ld-table-wrapper";
+      table.parentNode.insertBefore(wrapper, table);
+      wrapper.appendChild(table);
+
+      const copyBtn = document.createElement("button");
+      copyBtn.className = "ld-code-copy-btn";
+      copyBtn.type = "button";
+      copyBtn.title = "复制表格";
+      copyBtn.setAttribute("aria-label", "复制表格");
+      copyBtn.innerHTML = `
+        <svg viewBox="0 0 24 24" width="14" height="14" focusable="false" aria-hidden="true">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"></rect>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" fill="none" stroke="currentColor" stroke-width="2"></path>
+        </svg>
+      `;
+      copyBtn.addEventListener("click", async () => {
+        const text = table.innerText || table.textContent || "";
+        try {
+          await writeClipboardText(text);
+          copyBtn.classList.add("is-copied");
+          copyBtn.innerHTML = `
+            <svg viewBox="0 0 24 24" width="14" height="14" focusable="false" aria-hidden="true">
+              <polyline points="20 6 9 17 4 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline>
+            </svg>
+          `;
+          setTimeout(() => {
+            copyBtn.classList.remove("is-copied");
+            copyBtn.innerHTML = `
+              <svg viewBox="0 0 24 24" width="14" height="14" focusable="false" aria-hidden="true">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" fill="none" stroke="currentColor" stroke-width="2"></path>
+              </svg>
+            `;
+          }, 1500);
+        } catch (_) {
+          copyBtn.title = "复制失败";
+          setTimeout(() => { copyBtn.title = "复制表格"; }, 1500);
+        }
+      });
+      wrapper.appendChild(copyBtn);
+    }
+
+    // 为 Discourse 引用块添加复制按钮
+    for (const aside of body.querySelectorAll("aside.quote")) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "ld-quote-wrapper";
+      aside.parentNode.insertBefore(wrapper, aside);
+      wrapper.appendChild(aside);
+
+      const copyBtn = document.createElement("button");
+      copyBtn.className = "ld-code-copy-btn";
+      copyBtn.type = "button";
+      copyBtn.title = "复制引用";
+      copyBtn.setAttribute("aria-label", "复制引用");
+      copyBtn.innerHTML = `
+        <svg viewBox="0 0 24 24" width="14" height="14" focusable="false" aria-hidden="true">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"></rect>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" fill="none" stroke="currentColor" stroke-width="2"></path>
+        </svg>
+      `;
+      copyBtn.addEventListener("click", async () => {
+        const blockquote = aside.querySelector("blockquote");
+        const text = blockquote?.innerText || aside.innerText || "";
+        try {
+          await writeClipboardText(text);
+          copyBtn.classList.add("is-copied");
+          copyBtn.innerHTML = `
+            <svg viewBox="0 0 24 24" width="14" height="14" focusable="false" aria-hidden="true">
+              <polyline points="20 6 9 17 4 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline>
+            </svg>
+          `;
+          setTimeout(() => {
+            copyBtn.classList.remove("is-copied");
+            copyBtn.innerHTML = `
+              <svg viewBox="0 0 24 24" width="14" height="14" focusable="false" aria-hidden="true">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" fill="none" stroke="currentColor" stroke-width="2"></path>
+              </svg>
+            `;
+          }, 1500);
+        } catch (_) {
+          copyBtn.title = "复制失败";
+          setTimeout(() => { copyBtn.title = "复制引用"; }, 1500);
+        }
       });
       wrapper.appendChild(copyBtn);
     }
@@ -2556,6 +2657,31 @@
     state.latestRepliesRefreshButton.textContent = state.isRefreshingLatestReplies ? "刷新中..." : "刷新";
   }
 
+  function syncReplyOrderToggleUI() {
+    if (!state.replyOrderToggleButton) {
+      return;
+    }
+
+    const isLatestFirst = state.settings.replyOrder === "latestFirst";
+    const currentLabel = isLatestFirst ? "首帖 + 最新回复" : "默认顺序";
+    const nextLabel = isLatestFirst ? "默认顺序" : "首帖 + 最新回复";
+    const description = `当前回复排序：${currentLabel}，点击切换为${nextLabel}`;
+    state.replyOrderToggleButton.textContent = currentLabel;
+    state.replyOrderToggleButton.setAttribute("aria-pressed", String(isLatestFirst));
+    state.replyOrderToggleButton.setAttribute("aria-label", description);
+    state.replyOrderToggleButton.title = description;
+  }
+
+  function toggleReplyOrderFromToolbar() {
+    state.settings.replyOrder = state.settings.replyOrder === "latestFirst"
+      ? "default"
+      : "latestFirst";
+    saveSettings();
+    syncSettingsUI();
+    syncLatestRepliesRefreshUI();
+    refreshCurrentView();
+  }
+
   function shouldLoadLatestRepliesTopic(topic, targetSpec) {
     if (state.settings.postMode === "first" || state.settings.replyOrder !== "latestFirst") {
       return false;
@@ -3436,6 +3562,26 @@
     return new URL(template.replace("{size}", "96"), location.origin).toString();
   }
 
+  function buildPostUserLink(username, label, className) {
+    const text = typeof label === "string" && label.trim() ? label.trim() : "匿名用户";
+    const normalizedUsername = normalizeUsername(username);
+    if (!normalizedUsername) {
+      const fallback = document.createElement("strong");
+      fallback.className = className;
+      fallback.textContent = text;
+      return fallback;
+    }
+
+    const link = document.createElement("a");
+    link.className = `${className} ld-post-user-link`;
+    link.href = `/u/${encodeURIComponent(normalizedUsername)}/activity`;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.title = `在新窗口打开 @${normalizedUsername} 的活动页`;
+    link.textContent = text;
+    return link;
+  }
+
   function normalizeUsername(value) {
     return typeof value === "string" ? value.trim().toLowerCase() : "";
   }
@@ -3581,6 +3727,18 @@
         settings.floatingReplyButton = DEFAULT_SETTINGS.floatingReplyButton;
       }
 
+      if (settings.replyOrder !== "default" && settings.replyOrder !== "latestFirst") {
+        settings.replyOrder = DEFAULT_SETTINGS.replyOrder;
+      }
+
+      if (settings.previewMode !== "smart" && settings.previewMode !== "iframe") {
+        settings.previewMode = DEFAULT_SETTINGS.previewMode;
+      }
+      // 迁移：已有用户从 iframe 迁移到 smart，以启用代码块复制按钮
+      if (saved && saved.previewMode === "iframe") {
+        settings.previewMode = "smart";
+      }
+
       settings.postBodyFontSize = clampPostBodyFontSize(settings.postBodyFontSize);
       settings.drawerWidthCustom = clampDrawerWidth(settings.drawerWidthCustom);
       return settings;
@@ -3687,6 +3845,7 @@
 
     syncPostBodyFontSizeValue();
     syncPostBodyFontSizeControlState();
+    syncReplyOrderToggleUI();
   }
 
   function syncPostBodyFontSizeValue() {
@@ -3773,6 +3932,10 @@
       : target.value;
     target.value = String(state.settings[key]);
     saveSettings();
+
+    if (key === "replyOrder") {
+      syncReplyOrderToggleUI();
+    }
 
     if (key === "postBodyFontSize") {
       applyPostBodyFontSize();

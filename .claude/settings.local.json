@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit -m 'fix: 修复边栏预览内容不自动换行的问题:*)",
+      "Bash(git commit:*)",
+      "Bash(git log:*)",
+      "Bash(git checkout:*)",
+      "Bash(git push:*)",
+      "Bash(gh --version)",
+      "Bash(curl -s 'https://linux.do/t/topic/1804196.json')"
+    ]
+  }
+}
